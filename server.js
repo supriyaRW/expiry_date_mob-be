@@ -335,7 +335,6 @@
 //   });
 // }
 
-
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -427,7 +426,7 @@ function coerceIsoDate(text) {
 }
 
 const prompt = `
-You are an expert OCR data extraction agent. Your task is to analyze the provided image/text and extract exactly THREE fields into a structured JSON format. 
+You are an expert OCR data extraction agent. Your task is to analyze the provided OCR text and extract exactly THREE fields into a structured JSON format. 
 
 ### FIELDS TO EXTRACT:
 
@@ -435,25 +434,34 @@ You are an expert OCR data extraction agent. Your task is to analyze the provide
    - Strategy: Look for the largest text, brand names, or labels like "Product:", "Item:", or "Name:". 
    - Exclude: Batch numbers, weights (unless part of the name), or manufacturer addresses.
    - Cleanliness: Remove leading/trailing punctuation or labels.
+   - If not found, return "" (empty string).
 
 2. **expiryDate**: The date the product expires or should be used by.
-   - Keywords: "EXP", "Expiry", "Best Before", "BBE", "Use By", "Valid Until", "Best By".
-   - Format: Convert to YYYY-MM-DD. (e.g., "12/05/2026" becomes "2026-05-12").
-   - Logic: If only month/year is provided (e.g., "Dec 2025"), default to "2025-12-01". If not found, return "".
+   - Keywords: "EXP", "Expiry", "Best Before", "BBE", "Use By", "Valid Until", "Best By", "Expires", "Expiration Date".
+   - Format: Convert to YYYY-MM-DD. (e.g., "12/05/2026" becomes "2026-05-12", "15/03/2027" becomes "2027-03-15").
+   - Logic: If only month/year is provided (e.g., "Dec 2025"), default to "2025-12-01". 
+   - If multiple expiry dates found, choose the EARLIEST (soonest) date.
+   - Expiry dates are FUTURE dates (not past dates).
+   - If not found, return "" (empty string).
 
-3. **description**: A brief summary of the product's characteristics.
-   - Content: Include details like flavor, variant, net weight/volume, intended use, or a short summary of what the product is.
-   - Constraint: Keep it under 150 characters.
+3. **manufacturingDate**: The date the product was manufactured or produced.
+   - Keywords: "Mfg", "MFG", "Manufacturing", "Production", "Prod", "Made", "Made on", "Date of Manufacture", "Produced on".
+   - Format: Convert to YYYY-MM-DD format (same conversion rules as expiryDate).
+   - Logic: Manufacturing dates are PAST dates (not future dates).
+   - If multiple manufacturing dates found, choose the EARLIEST (oldest) date.
+   - If not found, return "" (empty string).
 
 ### STRICT RULES:
 - Return ONLY a single-line JSON object.
-- Do NOT include markdown formatting (no json blocks).
+- Do NOT include markdown formatting (no json blocks, no code fences).
 - Do NOT include any conversational text or explanations.
 - Use empty strings ("") for any field that cannot be identified with high confidence.
-- Ensure all keys are lowercase as defined below.
+- Ensure all keys are lowercase as defined: product, expiryDate, manufacturingDate
+- ALL dates MUST be in YYYY-MM-DD format
+- Read the ENTIRE OCR text carefully from top to bottom
 
 ### OUTPUT FORMAT:
-{"product": "String", "expiryDate": "YYYY-MM-DD", "description": "String"}`;
+{"product": "String", "expiryDate": "YYYY-MM-DD", "manufacturingDate": "YYYY-MM-DD"}`;
 
 app.get("/", (req, res) => {
   res.json({
@@ -479,8 +487,8 @@ app.post("/extract-fields", async (req, res) => {
     }
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
-      generationConfig: { temperature: 1 },
+      model: "gemini-3-flash-preview",
+      generationConfig: { temperature: 0.2 },
     });
 
     const result = await model.generateContent([
@@ -522,6 +530,8 @@ app.post("/extract-fields", async (req, res) => {
       if (parsed.manufacturingDate && String(parsed.manufacturingDate).trim()) {
         extracted.manufacturingDate = coerceIsoDate(String(parsed.manufacturingDate).trim());
         console.log("Manufacturing date - raw:", String(parsed.manufacturingDate).trim(), "converted:", extracted.manufacturingDate);
+      } else {
+        console.log("Manufacturing date not found in parsed JSON");
       }
     } catch (e) {
       console.warn("JSON parse failed, trying regex fallback. Error:", e.message);
