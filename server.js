@@ -12,6 +12,8 @@ app.use(express.json());
 const apiKey = process.env.GEMINI_API_KEY;
 if (!apiKey) {
   console.warn("GEMINI_API_KEY is not set. Set it in backend/.env");
+} else {
+  console.log("GEMINI_API_KEY is set (length:", apiKey.length, "chars)");
 }
 
 const genAI = new GoogleGenerativeAI(apiKey || "");
@@ -88,10 +90,30 @@ app.post("/extract-fields", async (req, res) => {
     res.json({ product, expiryDate, manufacturingDate });
   } catch (err) {
     console.error("extract-fields error:", err);
-    const message =
-      (err && err.message && String(err.message).trim()) ||
-      (err && typeof err.toString === "function" && err.toString()) ||
-      "Internal error";
+    console.error("Error type:", typeof err);
+    console.error("Error keys:", err ? Object.keys(err) : "null");
+    console.error("Error status:", err?.status);
+    console.error("Error statusText:", err?.statusText);
+    
+    // Extract error message from various possible structures
+    let message = "Internal error";
+    if (err) {
+      if (err.message) {
+        message = String(err.message).trim();
+      } else if (err.statusText) {
+        message = `${err.status || "Error"} ${err.statusText}`;
+      } else if (typeof err.toString === "function") {
+        const str = err.toString();
+        if (str && str !== "[object Object]") {
+          message = str;
+        }
+      }
+      // For Gemini API errors, check nested properties
+      if (message === "Internal error" && err.errorDetails) {
+        message = String(err.errorDetails).slice(0, 200);
+      }
+    }
+    
     res.status(500).json({ error: String(message).slice(0, 200) });
   }
 });
