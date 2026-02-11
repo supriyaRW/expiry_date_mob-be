@@ -18,13 +18,13 @@ if (!apiKey) {
 
 const genAI = new GoogleGenerativeAI(apiKey || "");
 
-const prompt = `You are a product label reader. Extract exactly three fields from the OCR text below.
+const prompt = `You are a product label reader. Extract exactly four fields from the OCR text below.
 
 RULES:
 1) product (required): The product or item name.
    - Prefer values from: "Product Description", "QR Item Description", "Item Description", "Product Name", "Product:", "Description:", "Item:", "Name:" (use the value after the colon).
-   - Otherwise use the main product title or the longest line that clearly describes the product (e.g. "TOILET SEAT SANITIZING WIPES", "SHARPS CONTAINER 10L").
-   - Do NOT use: LOT number, REF, batch, barcode, or date-only lines as product.
+   - Otherwise use the main product title or the longest line that clearly describes the product.
+   - Do NOT use: LOT number, REF, batch number, or date-only lines as product.
    - If the OCR text has no product-like line, use the first non-empty line that is not a date or code, or return "Unknown Product".
 
 2) expiryDate: Expiry / use-by / best before date. Return YYYY-MM-DD only.
@@ -32,12 +32,16 @@ RULES:
    - Convert any format (DD.MM.YYYY, MM/YYYY, etc.) to YYYY-MM-DD. Month-only -> first day (e.g. 2027-01-01).
    - If not found, return "".
 
-3) manufacturingDate: Manufacturing / production date. Return YYYY-MM-DD only.
-   - Look for: "Mfg", "MFG", "Production", "Prod.", "P:", "Manufacturing".
-   - Same conversion. If not found, return "".
+3) batchNo: Batch number / lot number. Return the full batch or lot identifier as printed.
+   - Look for: "Batch", "Batch No", "LOT", "LOT No", "LOT#", "Batch #", "Lote", etc.
+   - Return the value as-is (letters and numbers). If not found, return "".
 
-Output ONLY a single-line JSON object with keys product, expiryDate, manufacturingDate. No markdown, no code block, no extra text.
-Example: {"product":"SHARPS CONTAINER 10L","expiryDate":"2027-01-01","manufacturingDate":"2024-05-01"}`;
+4) manufacturingDate: Manufacturing / production date. Return YYYY-MM-DD only.
+   - Look for: "Mfg", "MFG", "Production", "Prod.", "P:", "Manufacturing".
+   - Same conversion as expiry. If not found, return "".
+
+Output ONLY a single-line JSON object with keys product, expiryDate, batchNo, manufacturingDate. No markdown, no code block, no extra text.
+Example: {"product":"SHARPS CONTAINER 10L","expiryDate":"2027-01-01","batchNo":"LOT12345","manufacturingDate":"2024-05-01"}`;
 
 app.get("/", (req, res) => {
   res.json({
@@ -83,11 +87,12 @@ app.post("/extract-fields", async (req, res) => {
 
     const product = (parsed.product != null && String(parsed.product).trim() !== "") ? String(parsed.product).trim() : "";
     const expiryDate = (parsed.expiryDate != null && String(parsed.expiryDate).trim() !== "") ? String(parsed.expiryDate).trim() : "";
+    const batchNo = (parsed.batchNo != null && String(parsed.batchNo).trim() !== "") ? String(parsed.batchNo).trim() : "";
     const manufacturingDate = (parsed.manufacturingDate != null && String(parsed.manufacturingDate).trim() !== "") ? String(parsed.manufacturingDate).trim() : "";
 
-    console.log("Extracted:", { product, expiryDate, manufacturingDate });
+    console.log("Extracted:", { product, expiryDate, batchNo, manufacturingDate });
 
-    res.json({ product, expiryDate, manufacturingDate });
+    res.json({ product, expiryDate, batchNo, manufacturingDate });
   } catch (err) {
     console.error("extract-fields error:", err);
     console.error("Error type:", typeof err);
