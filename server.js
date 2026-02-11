@@ -37,6 +37,17 @@ RULES:
 Output ONLY a single-line JSON object with keys product, expiryDate, manufacturingDate. No markdown, no code block, no extra text.
 Example: {"product":"SHARPS CONTAINER 10L","expiryDate":"2027-01-01","manufacturingDate":"2024-05-01"}`;
 
+app.get("/", (req, res) => {
+  res.json({
+    message: "OCR expiry backend",
+    health: "GET /health",
+    extract: "POST /extract-fields",
+  });
+});
+
+app.get("/favicon.ico", (req, res) => res.status(204).end());
+app.get("/favicon.png", (req, res) => res.status(204).end());
+
 app.post("/extract-fields", async (req, res) => {
   try {
     const { text } = req.body;
