@@ -22,48 +22,72 @@ const genAI = new GoogleGenerativeAI(apiKey || "");
 function coerceIsoDate(text) {
   if (!text || typeof text !== "string") return "";
   const normalized = text.trim();
+  // Already in YYYY-MM-DD format
   if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return normalized;
-  const m1 = normalized.match(/(\d{2})[\/\-.](\d{2})[\/\-.](\d{4})/);
+  // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  const m1 = normalized.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
   if (m1) {
     const [_, d, m, y] = m1;
-    return `${y}-${m}-${d}`;
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   }
-  const m2 = normalized.match(/(\d{4})[\/\-.](\d{2})[\/\-.](\d{2})/);
+  // YYYY/MM/DD or YYYY-MM-DD or YYYY.MM.DD
+  const m2 = normalized.match(/(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
   if (m2) {
     const [_, y, m, d] = m2;
-    return `${y}-${m}-${d}`;
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+  // MM/DD/YYYY format (US format)
+  const m3 = normalized.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+  if (m3 && parseInt(m3[1]) <= 12 && parseInt(m3[2]) <= 31) {
+    const [_, m, d, y] = m3;
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   }
   return normalized;
 }
 
-const prompt = `Task: Read the product label OCR text and return concise, reliable metadata.
+const prompt = `Task: Read the product label OCR text and extract metadata. You MUST extract expiryDate, batchNo, and manufacturingDate if they exist in the text.
 
 Return ONLY a JSON object with keys: product, expiryDate, batchNo, manufacturingDate
 
-Rules for product:
-- Output the human-friendly product title found on the label (e.g., "Olive Oil", "Instant Noodles Chicken", "Laundry Detergent").
-- If a brand name is prominent next to the product name, include it only if it helps identification (e.g., "Brand X Basmati Rice"). Keep it short.
-- If the text is in non‑Latin script, transliterate to English where obvious.
-- Never return generic words like "ingredients", "nutrition facts", lot numbers, barcodes, or regulatory text.
-- If multiple candidates exist, choose the one that best represents what the item is.
-- If you truly cannot infer a product title, set product to an empty string.
+CRITICAL: Extract these three fields (expiryDate, batchNo, manufacturingDate) with high priority.
 
 Rules for expiryDate:
-- If there is an explicit expiry/best before/BB/EXP/Use By date, return it in YYYY-MM-DD.
-- If multiple dates appear, prefer the one labeled as expiry/best before. Do NOT return manufacture/production dates as expiry.
-- If unreadable or absent, return an empty string.
+- Search for these labels (case-insensitive): "Expiry", "Expiry Date", "Exp Date", "EXP", "EXP DATE", "E:", "Exp:", "Use by", "Use-by", "Use By", "Use By Date", "Best before", "Best Before", "BB", "BBE", "BB Date", "Expires", "Expires on", "Expiration", "Expiration Date", "Valid until", "Valid Until", "Sell by", "Sell-by"
+- Extract the date value that appears after these labels
+- Convert to YYYY-MM-DD format (e.g., "15/03/2027" → "2027-03-15", "03-15-2027" → "2027-03-15")
+- If multiple expiry dates found, use the earliest one
+- If no expiry date found, return empty string ""
 
 Rules for batchNo:
-- Look for batch/lot identifiers labeled as "Batch", "Batch No", "LOT", "LOT No", "Lot Number", "Serial", or "Batch Code".
-- Extract the complete identifier value (alphanumeric, may include hyphens or slashes).
-- Extract only the value after the label (e.g., "LOT: ABC123" → "ABC123").
-- Preserve the exact format as printed on the label.
-- If not found, return an empty string.
+- Search for these labels (case-insensitive): "Batch", "Batch No", "Batch No:", "Batch Number", "Batch#", "Batch Code", "LOT", "LOT No", "LOT No:", "LOT Number", "LOT#", "Lot", "Lot No", "Lot Number", "Lote", "Lote No", "Serial", "Serial No", "Serial Number", "Serial#", "Batch ID", "Lot ID"
+- Extract the complete identifier value that appears after the label
+- Include alphanumeric characters, hyphens (-), slashes (/), underscores (_) as printed
+- Extract only the value, not the label (e.g., "LOT: ABC123XYZ" → "ABC123XYZ", "Batch No. 2024-001" → "2024-001")
+- Preserve exact format as printed
+- If not found, return empty string ""
 
 Rules for manufacturingDate:
-- If there is an explicit manufacturing/production/Mfg/MFG/Made date, return it in YYYY-MM-DD.
-- If multiple dates appear, prefer the one labeled as manufacturing/production/Mfg. Do NOT return expiry dates as manufacturing date.
-- If unreadable or absent, return an empty string.`;
+- Search for these labels (case-insensitive): "Mfg", "MFG", "Mfg Date", "MFG Date", "Mfg:", "MFG:", "Mfg. Date", "Manufacturing", "Manufacturing Date", "Manufactured", "Manufactured Date", "Production", "Production Date", "Prod", "Prod Date", "Prod:", "Produced", "Produced Date", "P:", "P Date", "Made", "Made on", "Made Date", "Made:", "Date of Manufacture", "Produced on", "Produced:", "Date of Production"
+- Extract the date value that appears after these labels
+- Convert to YYYY-MM-DD format (same conversion rules as expiryDate)
+- If multiple manufacturing dates found, use the earliest one
+- If no manufacturing date found, return empty string ""
+
+Rules for product:
+- Output the human-friendly product title found on the label
+- If a brand name is prominent, include it only if it helps identification. Keep it short.
+- Never return generic words like "ingredients", "nutrition facts", lot numbers, barcodes, or regulatory text.
+- If you cannot infer a product title, set product to an empty string.
+
+IMPORTANT: 
+- Read the ENTIRE OCR text carefully
+- Look for all variations of the labels mentioned above
+- Extract values even if labels are abbreviated or slightly misspelled
+- Always return dates in YYYY-MM-DD format
+- Return empty strings only if the field is truly not found
+
+Output format: Single-line JSON only, no markdown, no explanations.
+Example: {"product":"SHARPS CONTAINER 10L","expiryDate":"2027-03-15","batchNo":"LOT12345","manufacturingDate":"2024-01-10"}`;
 
 app.get("/", (req, res) => {
   res.json({
@@ -99,35 +123,61 @@ app.post("/extract-fields", async (req, res) => {
     ]);
 
     const textResponse = result.response.text();
+    console.log("Gemini raw response:", textResponse);
+    
     let extracted = { product: "", expiryDate: "", batchNo: "", manufacturingDate: "" };
     
     try {
       const jsonStart = textResponse.indexOf("{");
       const jsonEnd = textResponse.lastIndexOf("}");
       const raw = jsonStart >= 0 && jsonEnd >= 0 ? textResponse.slice(jsonStart, jsonEnd + 1) : textResponse;
+      console.log("Extracted JSON string:", raw);
       const parsed = JSON.parse(raw);
-      extracted.product = String(parsed.product || "").slice(0, 120);
-      if (parsed.expiryDate) extracted.expiryDate = coerceIsoDate(String(parsed.expiryDate));
-      if (parsed.batchNo) extracted.batchNo = String(parsed.batchNo || "").slice(0, 100);
-      if (parsed.manufacturingDate) extracted.manufacturingDate = coerceIsoDate(String(parsed.manufacturingDate));
+      console.log("Parsed JSON:", parsed);
+      
+      extracted.product = String(parsed.product || "").trim().slice(0, 120);
+      if (parsed.expiryDate && String(parsed.expiryDate).trim()) {
+        extracted.expiryDate = coerceIsoDate(String(parsed.expiryDate).trim());
+      }
+      if (parsed.batchNo && String(parsed.batchNo).trim()) {
+        extracted.batchNo = String(parsed.batchNo).trim().slice(0, 100);
+      }
+      if (parsed.manufacturingDate && String(parsed.manufacturingDate).trim()) {
+        extracted.manufacturingDate = coerceIsoDate(String(parsed.manufacturingDate).trim());
+      }
     } catch (e) {
-      // Fallback regex extraction
-      const expiryMatch = textResponse.match(/"expiryDate"\s*:\s*"([^"]+)"/);
-      if (expiryMatch) extracted.expiryDate = coerceIsoDate(expiryMatch[1]);
-      const productMatch = textResponse.match(/"product"\s*:\s*"([^"]+)"/);
-      if (productMatch) extracted.product = productMatch[1].slice(0, 120);
-      const batchMatch = textResponse.match(/"batchNo"\s*:\s*"([^"]+)"/);
-      if (batchMatch) extracted.batchNo = batchMatch[1].slice(0, 100);
-      const mfgMatch = textResponse.match(/"manufacturingDate"\s*:\s*"([^"]+)"/);
-      if (mfgMatch) extracted.manufacturingDate = coerceIsoDate(mfgMatch[1]);
+      console.warn("JSON parse failed, trying regex fallback. Error:", e.message);
+      // Fallback regex extraction - try multiple patterns
+      const expiryMatch = textResponse.match(/"expiryDate"\s*:\s*"([^"]+)"/i) || 
+                         textResponse.match(/expiryDate["\s]*:["\s]*([^",\s}]+)/i);
+      if (expiryMatch) extracted.expiryDate = coerceIsoDate(expiryMatch[1].trim());
+      
+      const productMatch = textResponse.match(/"product"\s*:\s*"([^"]+)"/i) ||
+                          textResponse.match(/product["\s]*:["\s]*([^",\s}]+)/i);
+      if (productMatch) extracted.product = productMatch[1].trim().slice(0, 120);
+      
+      const batchMatch = textResponse.match(/"batchNo"\s*:\s*"([^"]+)"/i) ||
+                        textResponse.match(/batchNo["\s]*:["\s]*([^",\s}]+)/i);
+      if (batchMatch) extracted.batchNo = batchMatch[1].trim().slice(0, 100);
+      
+      const mfgMatch = textResponse.match(/"manufacturingDate"\s*:\s*"([^"]+)"/i) ||
+                      textResponse.match(/manufacturingDate["\s]*:["\s]*([^",\s}]+)/i);
+      if (mfgMatch) extracted.manufacturingDate = coerceIsoDate(mfgMatch[1].trim());
     }
 
-    if (!extracted.product) extracted.product = "";
-    if (!extracted.expiryDate) extracted.expiryDate = "";
-    if (!extracted.batchNo) extracted.batchNo = "";
-    if (!extracted.manufacturingDate) extracted.manufacturingDate = "";
+    // Ensure all fields are strings
+    extracted.product = extracted.product || "";
+    extracted.expiryDate = extracted.expiryDate || "";
+    extracted.batchNo = extracted.batchNo || "";
+    extracted.manufacturingDate = extracted.manufacturingDate || "";
     
-    console.log("Extracted:", extracted);
+    console.log("Final extracted values:", {
+      product: extracted.product,
+      expiryDate: extracted.expiryDate,
+      batchNo: extracted.batchNo,
+      manufacturingDate: extracted.manufacturingDate
+    });
+    
     res.json(extracted);
   } catch (err) {
     console.error("extract-fields error:", err);
