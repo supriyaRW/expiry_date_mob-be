@@ -76,9 +76,12 @@ app.post("/extract-fields", async (req, res) => {
 
     res.json({ product, expiryDate, manufacturingDate });
   } catch (err) {
-    console.error(err);
-    const message = err && err.message ? String(err.message) : "Internal error";
-    res.status(500).json({ error: message });
+    console.error("extract-fields error:", err);
+    const message =
+      (err && err.message && String(err.message).trim()) ||
+      (err && typeof err.toString === "function" && err.toString()) ||
+      "Internal error";
+    res.status(500).json({ error: String(message).slice(0, 200) });
   }
 });
 
