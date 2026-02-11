@@ -18,64 +18,84 @@ if (!apiKey) {
 
 const genAI = new GoogleGenerativeAI(apiKey || "");
 
-const prompt = `You are an expert product label reader. Extract exactly four fields from the OCR text below with high accuracy.
+// Date coercion function to normalize dates to YYYY-MM-DD format
+function coerceIsoDate(text, isManufacturingDate = false) {
+  if (!text || typeof text !== "string") return "";
+  const normalized = text.trim();
+  // Already in YYYY-MM-DD format
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return normalized;
+  // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  const m1 = normalized.match(/(\d{2})[\/\-.](\d{2})[\/\-.](\d{4})/);
+  if (m1) {
+    const [, d, m, y] = m1;
+    return `${y}-${m}-${d}`;
+  }
+  // YYYY/MM/DD or YYYY-MM-DD or YYYY.MM.DD
+  const m2 = normalized.match(/(\d{4})[\/\-.](\d{2})[\/\-.](\d{2})/);
+  if (m2) {
+    const [, y, m, d] = m2;
+    return `${y}-${m}-${d}`;
+  }
+  // MM/YYYY or MM.YYYY
+  const m3 = normalized.match(/(\d{2})[\/\-.](\d{4})/);
+  if (m3) {
+    const [, m, y] = m3;
+    return `${y}-${m}-01`;
+  }
+  // YYYY only
+  const m4 = normalized.match(/^(\d{4})$/);
+  if (m4) {
+    // Use first day of year for manufacturing, last day for expiry
+    return isManufacturingDate ? `${m4[1]}-01-01` : `${m4[1]}-12-31`;
+  }
+  // Try to parse common date formats with month names
+  const monthMap = {
+    jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+    jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12"
+  };
+  const m5 = normalized.match(/(\d{1,2})[\s\-]?([a-z]{3})[\s\-]?(\d{4})/i);
+  if (m5) {
+    const [, d, mon, y] = m5;
+    const month = monthMap[mon.toLowerCase().slice(0, 3)];
+    if (month) {
+      return `${y}-${month}-${d.padStart(2, "0")}`;
+    }
+  }
+  return normalized; // Return as-is if can't parse
+}
 
-FIELD EXTRACTION RULES:
+const prompt = `Task: Read the product label OCR text and extract metadata.
 
-1) product (REQUIRED - always return a value):
-   - PRIMARY SOURCES (in order of priority):
-     * Lines containing: "Product Description", "QR Item Description", "Item Description", "Product Name", "Product:", "Description:", "Item:", "Name:", "Product Name:", "Item Name:"
-     * Extract the text AFTER the colon or label (e.g., "Product: SHARPS CONTAINER" → "SHARPS CONTAINER")
-   - SECONDARY SOURCES (if primary not found):
-     * The longest line that contains descriptive words (not codes, dates, or numbers only)
-     * Main product title (usually first or second substantial line)
-     * Brand name + product name combination
-   - EXCLUDE:
-     * LOT/Batch numbers, REF codes, serial numbers, barcodes
-     * Date-only lines (e.g., "2027-01-01")
-     * Single-word codes or abbreviations
-   - If truly no product name found, return "Unknown Product" (never empty string)
+Return ONLY a JSON object with keys: product, expiryDate, batchNo, manufacturingDate
 
-2) expiryDate (return YYYY-MM-DD format or empty string ""):
-   - SEARCH TERMS: "Expiry", "Exp:", "E:", "EXP", "Expiry Date", "Exp Date", "Use by", "Use-by", "Use By", "Best before", "Best Before", "BB", "BBE", "Expires", "Valid until", "Valid Until"
-   - DATE FORMAT CONVERSION:
-     * DD.MM.YYYY → YYYY-MM-DD (e.g., "15.03.2027" → "2027-03-15")
-     * DD/MM/YYYY → YYYY-MM-DD (e.g., "15/03/2027" → "2027-03-15")
-     * MM/DD/YYYY → YYYY-MM-DD (e.g., "03/15/2027" → "2027-03-15")
-     * YYYY-MM-DD → keep as-is
-     * MM/YYYY or MM.YYYY → YYYY-MM-01 (e.g., "03/2027" → "2027-03-01")
-     * YYYY → YYYY-12-31 (if only year, use last day of year)
-   - If multiple expiry dates found, use the EARLIEST one
-   - If not found, return "" (empty string)
+Rules for product:
+- Extract the human-friendly product name/title from the label
+- Prefer values after labels like "Product:", "Description:", "Item:", "Product Name:"
+- If no label found, use the main product title (usually the longest descriptive line)
+- Exclude lot numbers, batch codes, dates, barcodes, and regulatory text
+- Keep it concise (max 120 chars). If not found, return empty string ""
 
-3) batchNo (return as printed or empty string ""):
-   - SEARCH TERMS: "Batch", "Batch No", "Batch No:", "Batch#", "Batch Number", "LOT", "LOT No", "LOT No:", "LOT#", "Lot Number", "Lote", "Lote No", "Batch ID", "Lot ID", "Serial", "Serial No"
-   - EXTRACTION:
-     * Extract the complete value after the label (e.g., "LOT: ABC123XYZ" → "ABC123XYZ")
-     * Include all alphanumeric characters, hyphens, and slashes as printed
-     * Do NOT include the label itself (e.g., don't return "LOT ABC123", return "ABC123")
-   - COMMON PATTERNS:
-     * "LOT12345" → "12345" or "LOT12345" (prefer without prefix if ambiguous)
-     * "Batch: 2024-001" → "2024-001"
-     * "LOT# ABC-XYZ-123" → "ABC-XYZ-123"
-   - If not found, return "" (empty string)
+Rules for expiryDate:
+- Look for labels: "Expiry", "Exp Date", "EXP", "Use by", "Best before", "BB", "BBE", "Expires", "Valid until", "Sell by"
+- Extract the date value and return in YYYY-MM-DD format
+- If multiple expiry dates appear, use the earliest one
+- If not found or unreadable, return empty string ""
 
-4) manufacturingDate (return YYYY-MM-DD format or empty string ""):
-   - SEARCH TERMS: "Mfg", "MFG", "Mfg Date", "MFG Date", "Mfg:", "Manufacturing", "Manufacturing Date", "Production", "Prod.", "Prod Date", "Production Date", "P:", "Made", "Made on", "Produced", "Produced on"
-   - DATE FORMAT CONVERSION: Same rules as expiryDate (convert to YYYY-MM-DD)
-   - If multiple manufacturing dates found, use the EARLIEST one
-   - If not found, return "" (empty string)
+Rules for batchNo:
+- Look for labels: "Batch", "Batch No", "LOT", "LOT No", "Lot Number", "Serial", "Batch Code"
+- Extract the complete batch/lot identifier value (alphanumeric, may include hyphens/slashes)
+- Extract only the value after the label (e.g., "LOT: ABC123" → "ABC123")
+- Preserve the exact format as printed
+- If not found, return empty string ""
 
-OUTPUT FORMAT:
-- Output ONLY a single-line JSON object with keys: product, expiryDate, batchNo, manufacturingDate
-- No markdown, no code blocks, no explanations, no extra text
-- All dates must be YYYY-MM-DD format (or empty string)
-- Product must never be empty (use "Unknown Product" if not found)
+Rules for manufacturingDate:
+- Look for labels: "Mfg", "MFG", "Manufacturing", "Production", "Prod", "Made", "Made on", "Date of Manufacture"
+- Extract the date value and return in YYYY-MM-DD format
+- If multiple manufacturing dates appear, use the earliest one
+- If not found or unreadable, return empty string ""
 
-EXAMPLE OUTPUT:
-{"product":"SHARPS CONTAINER 10L","expiryDate":"2027-01-15","batchNo":"LOT12345","manufacturingDate":"2024-05-01"}
-
-Now extract the fields from the OCR text below:`;
+Output format: Single-line JSON only, no markdown, no explanations.
+Example: {"product":"SHARPS CONTAINER 10L","expiryDate":"2027-03-15","batchNo":"LOT12345","manufacturingDate":"2024-01-10"}`;
 
 app.get("/", (req, res) => {
   res.json({
@@ -100,33 +120,57 @@ app.post("/extract-fields", async (req, res) => {
       return res.status(500).json({ error: "GEMINI_API_KEY not configured on server" });
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-2.5-flash",
+      generationConfig: { temperature: 0.2 }
+    });
 
     const result = await model.generateContent([
       { text: prompt },
       { text: "\n\nOCR_TEXT:\n" + text }
     ]);
 
-    let raw = (await result.response.text()).trim();
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (jsonMatch) raw = jsonMatch[0];
-
-    let parsed;
+    const textResponse = result.response.text();
+    let extracted = { product: "", expiryDate: "", batchNo: "", manufacturingDate: "" };
+    
+    // Try to parse JSON from response
     try {
-      parsed = JSON.parse(raw);
+      const jsonStart = textResponse.indexOf("{");
+      const jsonEnd = textResponse.lastIndexOf("}");
+      const raw = jsonStart >= 0 && jsonEnd >= 0 
+        ? textResponse.slice(jsonStart, jsonEnd + 1) 
+        : textResponse;
+      const parsed = JSON.parse(raw);
+      
+      if (parsed.product) extracted.product = String(parsed.product).trim().slice(0, 120);
+      if (parsed.expiryDate) extracted.expiryDate = coerceIsoDate(String(parsed.expiryDate), false);
+      if (parsed.batchNo) extracted.batchNo = String(parsed.batchNo).trim().slice(0, 100);
+      if (parsed.manufacturingDate) extracted.manufacturingDate = coerceIsoDate(String(parsed.manufacturingDate), true);
     } catch (e) {
-      console.error("Gemini raw:", raw);
-      return res.status(500).json({ error: "Gemini response not valid JSON", raw });
+      // Fallback: try regex extraction if JSON parsing fails
+      console.warn("JSON parse failed, trying regex fallback. Raw:", textResponse.slice(0, 200));
+      const productMatch = textResponse.match(/"product"\s*:\s*"([^"]+)"/);
+      if (productMatch) extracted.product = productMatch[1].trim().slice(0, 120);
+      
+      const expiryMatch = textResponse.match(/"expiryDate"\s*:\s*"([^"]+)"/);
+      if (expiryMatch) extracted.expiryDate = coerceIsoDate(expiryMatch[1], false);
+      
+      const batchMatch = textResponse.match(/"batchNo"\s*:\s*"([^"]+)"/);
+      if (batchMatch) extracted.batchNo = batchMatch[1].trim().slice(0, 100);
+      
+      const mfgMatch = textResponse.match(/"manufacturingDate"\s*:\s*"([^"]+)"/);
+      if (mfgMatch) extracted.manufacturingDate = coerceIsoDate(mfgMatch[1], true);
     }
 
-    const product = (parsed.product != null && String(parsed.product).trim() !== "") ? String(parsed.product).trim() : "";
-    const expiryDate = (parsed.expiryDate != null && String(parsed.expiryDate).trim() !== "") ? String(parsed.expiryDate).trim() : "";
-    const batchNo = (parsed.batchNo != null && String(parsed.batchNo).trim() !== "") ? String(parsed.batchNo).trim() : "";
-    const manufacturingDate = (parsed.manufacturingDate != null && String(parsed.manufacturingDate).trim() !== "") ? String(parsed.manufacturingDate).trim() : "";
+    // Ensure all fields are strings and normalized
+    extracted.product = extracted.product || "";
+    extracted.expiryDate = extracted.expiryDate || "";
+    extracted.batchNo = extracted.batchNo || "";
+    extracted.manufacturingDate = extracted.manufacturingDate || "";
 
-    console.log("Extracted:", { product, expiryDate, batchNo, manufacturingDate });
+    console.log("Extracted:", extracted);
 
-    res.json({ product, expiryDate, batchNo, manufacturingDate });
+    res.json(extracted);
   } catch (err) {
     console.error("extract-fields error:", err);
     console.error("Error type:", typeof err);
@@ -161,8 +205,14 @@ app.get("/health", (req, res) => {
   res.json({ ok: true, message: "OCR backend running" });
 });
 
-const port = process.env.PORT || 5050;
-const host = "0.0.0.0";
-app.listen(port, host, () => {
-  console.log(`Backend listening on http://${host}:${port} (use this PC's LAN IP for real device)`);
-});
+// Export app for Vercel serverless functions
+export default app;
+
+// Only start listening if running locally (not on Vercel)
+if (process.env.VERCEL !== "1" && !process.env.VERCEL_ENV) {
+  const port = process.env.PORT || 5050;
+  const host = "0.0.0.0";
+  app.listen(port, host, () => {
+    console.log(`Backend listening on http://${host}:${port} (use this PC's LAN IP for real device)`);
+  });
+}
