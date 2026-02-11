@@ -160,19 +160,45 @@ Extraction steps:
 4. If multiple manufacturing dates found, choose the earliest one
 5. If no manufacturing date found, return ""
 
-FIELD 4: product (optional, for reference)
-- Extract the main product name/title from the label
-- Keep it short and descriptive
-- If not found, return ""
+FIELD 4: product (REQUIRED - MUST EXTRACT)
+Your task: Find the product name/title on the product label.
+
+Search for these keywords/labels (case-insensitive):
+- "Product", "Product Name", "Product:", "Product Name:", "Product Description"
+- "Item", "Item Name", "Item:", "Item Description", "Item Name:"
+- "Description", "Description:"
+- "QR Item Description", "Item Description"
+
+Extraction steps:
+1. First, look for explicit labels like "Product:", "Product Name:", "Item:", "Description:"
+2. Extract the text that appears AFTER the colon/label (e.g., "Product: SHARPS CONTAINER" → "SHARPS CONTAINER")
+3. If no explicit label found, look for the main product title:
+   - Usually appears at the top or beginning of the OCR text
+   - Usually the longest descriptive line (2+ words)
+   - Often capitalized or in larger font (appears prominent)
+   - May include brand name + product name
+4. Exclude these from product name:
+   - Lot numbers, batch numbers, serial numbers
+   - Dates (expiry dates, manufacturing dates)
+   - Barcodes, QR codes, reference codes
+   - Single-word codes or abbreviations
+   - Company addresses, contact information
+   - Regulatory text, ingredients list headers
+5. Keep it concise (max 120 characters)
+6. If brand name is prominent, include it only if it helps identification (e.g., "Brand X Basmati Rice")
+7. If truly cannot find product name, return "" (empty string)
 
 CRITICAL INSTRUCTIONS:
-1. Read the ENTIRE OCR text from top to bottom
-2. Look carefully for ALL variations of the keywords listed above
-3. Dates may appear in various formats - convert ALL to YYYY-MM-DD
-4. Batch numbers may have different formats - preserve them exactly as printed
-5. If a field is not found after thorough search, return empty string ""
-6. Do NOT confuse expiry dates with manufacturing dates
-7. Do NOT include the keyword/label in the extracted value (e.g., don't return "LOT ABC123", return "ABC123")
+1. Read the ENTIRE OCR text from top to bottom carefully
+2. Extract ALL four fields: product, expiryDate, batchNo, manufacturingDate
+3. Product name is REQUIRED - always try to extract it
+4. Look carefully for ALL variations of the keywords listed above
+5. Dates may appear in various formats - convert ALL to YYYY-MM-DD
+6. Batch numbers may have different formats - preserve them exactly as printed
+7. If a field is not found after thorough search, return empty string ""
+8. Do NOT confuse expiry dates with manufacturing dates
+9. Do NOT include the keyword/label in the extracted value (e.g., don't return "LOT ABC123", return "ABC123")
+10. Product name should be the main item name, not generic text or codes
 
 Output format: Return ONLY valid JSON, no markdown, no code blocks, no explanations.
 Example output: {"product":"SHARPS CONTAINER 10L","expiryDate":"2027-03-15","batchNo":"LOT12345","manufacturingDate":"2024-01-10"}`;
@@ -223,7 +249,14 @@ app.post("/extract-fields", async (req, res) => {
       const parsed = JSON.parse(raw);
       console.log("Parsed JSON:", parsed);
       
-      extracted.product = String(parsed.product || "").trim().slice(0, 120);
+      // Extract product name
+      if (parsed.product && String(parsed.product).trim()) {
+        extracted.product = String(parsed.product).trim().slice(0, 120);
+        console.log("Product name extracted:", extracted.product);
+      } else {
+        console.log("Product name not found in parsed JSON");
+        extracted.product = "";
+      }
       
       // Extract expiryDate with priority
       if (parsed.expiryDate && String(parsed.expiryDate).trim()) {
@@ -262,9 +295,23 @@ app.post("/extract-fields", async (req, res) => {
         }
       }
       
-      const productMatch = textResponse.match(/"product"\s*:\s*"([^"]+)"/i) ||
-                          textResponse.match(/product["\s]*:["\s]*([^",\s}]+)/i);
-      if (productMatch) extracted.product = productMatch[1].trim().slice(0, 120);
+      // Try multiple patterns for product
+      const productPatterns = [
+        /"product"\s*:\s*"([^"]+)"/i,
+        /product["\s]*:["\s]*"([^"]+)"/i,
+        /product["\s]*:["\s]*([^",\n}]+)/i,
+        /"productName"\s*:\s*"([^"]+)"/i,
+        /productName["\s]*:["\s]*"([^"]+)"/i
+      ];
+      
+      for (const pattern of productPatterns) {
+        const match = textResponse.match(pattern);
+        if (match && match[1] && match[1].trim()) {
+          extracted.product = match[1].trim().slice(0, 120);
+          console.log("Product name extracted via regex fallback:", extracted.product);
+          break;
+        }
+      }
       
       const batchMatch = textResponse.match(/"batchNo"\s*:\s*"([^"]+)"/i) ||
                         textResponse.match(/batchNo["\s]*:["\s]*([^",\s}]+)/i);
