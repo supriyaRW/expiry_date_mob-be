@@ -45,49 +45,86 @@ function coerceIsoDate(text) {
   return normalized;
 }
 
-const prompt = `Task: Read the product label OCR text and extract metadata. You MUST extract expiryDate, batchNo, and manufacturingDate if they exist in the text.
+const prompt = `You are extracting product information from OCR text of a product label image. Extract exactly three critical fields: expiryDate, batchNo, and manufacturingDate.
 
-Return ONLY a JSON object with keys: product, expiryDate, batchNo, manufacturingDate
+Return ONLY a JSON object with these keys: product, expiryDate, batchNo, manufacturingDate
 
-CRITICAL: Extract these three fields (expiryDate, batchNo, manufacturingDate) with high priority.
+FIELD 1: expiryDate
+Your task: Find the expiry/expiration date on the product label.
+Search for these keywords (case-insensitive, check all variations):
+- "Expiry", "Expiry Date", "Exp Date", "EXP", "EXP DATE", "E:", "Exp:"
+- "Use by", "Use-by", "Use By", "Use By Date", "Use Before"
+- "Best before", "Best Before", "Best Before Date", "BB", "BBE", "BB Date"
+- "Expires", "Expires on", "Expires:", "Expiration", "Expiration Date"
+- "Valid until", "Valid Until", "Valid Until Date", "Valid Thru"
+- "Sell by", "Sell-by", "Sell By Date"
 
-Rules for expiryDate:
-- Search for these labels (case-insensitive): "Expiry", "Expiry Date", "Exp Date", "EXP", "EXP DATE", "E:", "Exp:", "Use by", "Use-by", "Use By", "Use By Date", "Best before", "Best Before", "BB", "BBE", "BB Date", "Expires", "Expires on", "Expiration", "Expiration Date", "Valid until", "Valid Until", "Sell by", "Sell-by"
-- Extract the date value that appears after these labels
-- Convert to YYYY-MM-DD format (e.g., "15/03/2027" → "2027-03-15", "03-15-2027" → "2027-03-15")
-- If multiple expiry dates found, use the earliest one
-- If no expiry date found, return empty string ""
+Extraction steps:
+1. Find any line containing one of the keywords above
+2. Extract the date value that follows the keyword (may be on same line or next line)
+3. Convert the date to YYYY-MM-DD format:
+   - "15/03/2027" → "2027-03-15"
+   - "03/15/2027" → "2027-03-15" (US format)
+   - "15-03-2027" → "2027-03-15"
+   - "15.03.2027" → "2027-03-15"
+   - "2027-03-15" → keep as-is
+   - "Mar 15, 2027" → "2027-03-15"
+4. If multiple expiry dates found, choose the earliest one
+5. If no expiry date found, return ""
 
-Rules for batchNo:
-- Search for these labels (case-insensitive): "Batch", "Batch No", "Batch No:", "Batch Number", "Batch#", "Batch Code", "LOT", "LOT No", "LOT No:", "LOT Number", "LOT#", "Lot", "Lot No", "Lot Number", "Lote", "Lote No", "Serial", "Serial No", "Serial Number", "Serial#", "Batch ID", "Lot ID"
-- Extract the complete identifier value that appears after the label
-- Include alphanumeric characters, hyphens (-), slashes (/), underscores (_) as printed
-- Extract only the value, not the label (e.g., "LOT: ABC123XYZ" → "ABC123XYZ", "Batch No. 2024-001" → "2024-001")
-- Preserve exact format as printed
-- If not found, return empty string ""
+FIELD 2: batchNo
+Your task: Find the batch number or lot number on the product label.
+Search for these keywords (case-insensitive, check all variations):
+- "Batch", "Batch No", "Batch No:", "Batch Number", "Batch#", "Batch Code", "Batch ID"
+- "LOT", "LOT No", "LOT No:", "LOT Number", "LOT#", "Lot", "Lot No", "Lot Number", "Lot ID"
+- "Lote", "Lote No", "Lote Number"
+- "Serial", "Serial No", "Serial Number", "Serial#"
 
-Rules for manufacturingDate:
-- Search for these labels (case-insensitive): "Mfg", "MFG", "Mfg Date", "MFG Date", "Mfg:", "MFG:", "Mfg. Date", "Manufacturing", "Manufacturing Date", "Manufactured", "Manufactured Date", "Production", "Production Date", "Prod", "Prod Date", "Prod:", "Produced", "Produced Date", "P:", "P Date", "Made", "Made on", "Made Date", "Made:", "Date of Manufacture", "Produced on", "Produced:", "Date of Production"
-- Extract the date value that appears after these labels
-- Convert to YYYY-MM-DD format (same conversion rules as expiryDate)
-- If multiple manufacturing dates found, use the earliest one
-- If no manufacturing date found, return empty string ""
+Extraction steps:
+1. Find any line containing one of the keywords above
+2. Extract the complete identifier that follows the keyword
+3. Include all characters: letters, numbers, hyphens (-), slashes (/), underscores (_)
+4. Extract ONLY the value, not the keyword itself:
+   - "LOT: ABC123XYZ" → "ABC123XYZ"
+   - "Batch No. 2024-001" → "2024-001"
+   - "LOT# ABC-XYZ-123" → "ABC-XYZ-123"
+   - "Batch: LOT12345" → "LOT12345"
+5. Preserve the exact format as printed (case-sensitive, include all characters)
+6. If not found, return ""
 
-Rules for product:
-- Output the human-friendly product title found on the label
-- If a brand name is prominent, include it only if it helps identification. Keep it short.
-- Never return generic words like "ingredients", "nutrition facts", lot numbers, barcodes, or regulatory text.
-- If you cannot infer a product title, set product to an empty string.
+FIELD 3: manufacturingDate
+Your task: Find the manufacturing/production date on the product label.
+Search for these keywords (case-insensitive, check all variations):
+- "Mfg", "MFG", "Mfg Date", "MFG Date", "Mfg:", "MFG:", "Mfg. Date"
+- "Manufacturing", "Manufacturing Date", "Manufactured", "Manufactured Date"
+- "Production", "Production Date", "Prod", "Prod Date", "Prod:", "Produced", "Produced Date"
+- "P:", "P Date"
+- "Made", "Made on", "Made Date", "Made:"
+- "Date of Manufacture", "Produced on", "Produced:", "Date of Production"
 
-IMPORTANT: 
-- Read the ENTIRE OCR text carefully
-- Look for all variations of the labels mentioned above
-- Extract values even if labels are abbreviated or slightly misspelled
-- Always return dates in YYYY-MM-DD format
-- Return empty strings only if the field is truly not found
+Extraction steps:
+1. Find any line containing one of the keywords above
+2. Extract the date value that follows the keyword
+3. Convert to YYYY-MM-DD format (use same conversion rules as expiryDate)
+4. If multiple manufacturing dates found, choose the earliest one
+5. If no manufacturing date found, return ""
 
-Output format: Single-line JSON only, no markdown, no explanations.
-Example: {"product":"SHARPS CONTAINER 10L","expiryDate":"2027-03-15","batchNo":"LOT12345","manufacturingDate":"2024-01-10"}`;
+FIELD 4: product (optional, for reference)
+- Extract the main product name/title from the label
+- Keep it short and descriptive
+- If not found, return ""
+
+CRITICAL INSTRUCTIONS:
+1. Read the ENTIRE OCR text from top to bottom
+2. Look carefully for ALL variations of the keywords listed above
+3. Dates may appear in various formats - convert ALL to YYYY-MM-DD
+4. Batch numbers may have different formats - preserve them exactly as printed
+5. If a field is not found after thorough search, return empty string ""
+6. Do NOT confuse expiry dates with manufacturing dates
+7. Do NOT include the keyword/label in the extracted value (e.g., don't return "LOT ABC123", return "ABC123")
+
+Output format: Return ONLY valid JSON, no markdown, no code blocks, no explanations.
+Example output: {"product":"SHARPS CONTAINER 10L","expiryDate":"2027-03-15","batchNo":"LOT12345","manufacturingDate":"2024-01-10"}`;
 
 app.get("/", (req, res) => {
   res.json({
