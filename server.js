@@ -479,7 +479,7 @@ app.post("/extract-fields", async (req, res) => {
     }
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-pro",
+      model: "gemini-2.5-flash",
       generationConfig: { temperature: 1 },
     });
 
