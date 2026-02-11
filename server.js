@@ -426,81 +426,34 @@ function coerceIsoDate(text) {
   return normalized;
 }
 
-const prompt = `You are an expert at extracting product information from OCR text using Gemini 3 Flash Preview model. Extract exactly THREE critical fields: product name, expiry date, and manufacturing date.
+const prompt = `
+You are an expert OCR data extraction agent. Your task is to analyze the provided image/text and extract exactly THREE fields into a structured JSON format. 
 
-Return ONLY a JSON object with these keys: product, expiryDate, manufacturingDate
+### FIELDS TO EXTRACT:
 
-FIELD 1: product (REQUIRED - MUST EXTRACT)
-Your task: Extract the product name/title from the product label.
+1. **product**: The primary name or title of the item.
+   - Strategy: Look for the largest text, brand names, or labels like "Product:", "Item:", or "Name:". 
+   - Exclude: Batch numbers, weights (unless part of the name), or manufacturer addresses.
+   - Cleanliness: Remove leading/trailing punctuation or labels.
 
-Search strategy:
-- Look for labels: "Product:", "Product Name:", "Item:", "Description:", "Item Name:", "Product Description"
-- Extract text AFTER the colon/label (e.g., "Product: MAGGI Chicken Bouillon" → "MAGGI Chicken Bouillon")
-- If no explicit label, find the main product title:
-  * Usually at the top/beginning of OCR text
-  * Longest descriptive line (2+ words)
-  * Often capitalized or prominent
-  * May include brand + product name
-- EXCLUDE: batch numbers, lot numbers, dates, barcodes, codes, addresses, regulatory text
-- Keep concise (max 120 chars)
-- If not found, return "" (empty string)
+2. **expiryDate**: The date the product expires or should be used by.
+   - Keywords: "EXP", "Expiry", "Best Before", "BBE", "Use By", "Valid Until", "Best By".
+   - Format: Convert to YYYY-MM-DD. (e.g., "12/05/2026" becomes "2026-05-12").
+   - Logic: If only month/year is provided (e.g., "Dec 2025"), default to "2025-12-01". If not found, return "".
 
-FIELD 2: expiryDate (HIGHEST PRIORITY - MUST EXTRACT IF PRESENT)
-Your task: Find the expiry/expiration date. This is CRITICAL.
+3. **description**: A brief summary of the product's characteristics.
+   - Content: Include details like flavor, variant, net weight/volume, intended use, or a short summary of what the product is.
+   - Constraint: Keep it under 150 characters.
 
-Search for keywords (case-insensitive):
-- "Expiry", "Exp Date", "EXP", "EXP DATE", "E:", "Exp:", "Expiry Date"
-- "Use by", "Use-by", "Use By", "Use By Date", "Use Before"
-- "Best before", "Best Before", "BB", "BBE", "BB Date"
-- "Expires", "Expires on", "Expiration", "Expiration Date"
-- "Valid until", "Valid Until", "Valid Thru"
-- "Sell by", "Best By", "Consume By"
+### STRICT RULES:
+- Return ONLY a single-line JSON object.
+- Do NOT include markdown formatting (no json blocks).
+- Do NOT include any conversational text or explanations.
+- Use empty strings ("") for any field that cannot be identified with high confidence.
+- Ensure all keys are lowercase as defined below.
 
-Extraction steps:
-1. Scan ENTIRE OCR text line by line
-2. Find ANY line with keywords above (even if misspelled/abbreviated)
-3. Date may appear on same line, next line, or separated by colon/dash/space
-4. Extract date value and convert to YYYY-MM-DD format:
-   - "15/03/2027" or "15-03-2027" or "15.03.2027" → "2027-03-15"
-   - "03/15/2027" → "2027-03-15" (US format MM/DD/YYYY)
-   - "2027-03-15" → keep as-is
-   - "Mar 15, 2027" or "15 Mar 2027" → "2027-03-15"
-   - "15/03/27" → "2027-03-15" (assume 20XX)
-5. If multiple expiry dates found, choose EARLIEST (soonest) date
-6. Expiry dates are FUTURE dates (not past like manufacturing dates)
-7. If not found, return "" (empty string)
-
-FIELD 3: manufacturingDate (MUST EXTRACT IF PRESENT)
-Your task: Find the manufacturing/production date.
-
-Search for keywords (case-insensitive):
-- "Mfg", "MFG", "Mfg Date", "MFG Date", "Mfg:", "Manufacturing Date"
-- "Manufactured", "Manufactured Date"
-- "Production", "Production Date", "Prod", "Prod Date", "Produced"
-- "Made", "Made on", "Made Date", "Made:"
-- "Date of Manufacture", "Produced on", "Date of Production"
-
-Extraction steps:
-1. Find any line containing keywords above
-2. Extract date value that follows the keyword
-3. Convert to YYYY-MM-DD format (same rules as expiryDate)
-4. Manufacturing dates are PAST dates (not future like expiry dates)
-5. If multiple manufacturing dates found, choose earliest (oldest) date
-6. If not found, return "" (empty string)
-
-CRITICAL INSTRUCTIONS FOR GEMINI 3 FLASH PREVIEW:
-1. Read ENTIRE OCR text from top to bottom carefully
-2. Extract ONLY these three fields: product, expiryDate, manufacturingDate
-3. Product name is REQUIRED - always try to extract it
-4. Expiry date is HIGHEST PRIORITY - extract if present
-5. Manufacturing date is IMPORTANT - extract if present
-6. ALL dates MUST be converted to YYYY-MM-DD format
-7. Do NOT confuse expiry dates (future) with manufacturing dates (past)
-8. Do NOT include keywords/labels in extracted values
-9. Return ONLY valid JSON, no markdown, no code blocks, no explanations
-
-Output format: Single-line JSON only.
-Example: {"product":"MAGGI Chicken Bouillon Powder 6x1Kg","expiryDate":"2027-03-15","manufacturingDate":"2024-01-10"}`;
+### OUTPUT FORMAT:
+{"product": "String", "expiryDate": "YYYY-MM-DD", "description": "String"}`;
 
 app.get("/", (req, res) => {
   res.json({
