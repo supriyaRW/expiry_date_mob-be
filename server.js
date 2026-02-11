@@ -436,19 +436,36 @@ You are an expert OCR data extraction agent. Your task is to analyze the provide
    - Cleanliness: Remove leading/trailing punctuation or labels.
    - If not found, return "" (empty string).
 
-2. **expiryDate**: The date the product expires or should be used by.
-   - Keywords: "EXP", "Expiry", "Best Before", "BBE", "Use By", "Valid Until", "Best By", "Expires", "Expiration Date".
-   - Format: Convert to YYYY-MM-DD. (e.g., "12/05/2026" becomes "2026-05-12", "15/03/2027" becomes "2027-03-15").
+2. **expiryDate**: The date the product expires or should be used by. THIS IS CRITICAL - MUST EXTRACT IF PRESENT.
+   - Keywords (case-insensitive): "EXP", "Expiry", "Expiry Date", "Exp Date", "Best Before", "BBE", "BB", "Use By", "Use-by", "Use Before", "Valid Until", "Valid Thru", "Best By", "Consume By", "Expires", "Expires on", "Expiration", "Expiration Date", "Sell by", "Sell-by".
+   - Search strategy: Scan the ENTIRE OCR text line by line. Look for ANY line containing these keywords (even if misspelled or abbreviated).
+   - Date location: Date may appear on same line after keyword, next line, or separated by colon/dash/space.
+   - Format: Convert to YYYY-MM-DD. Examples:
+     * "12/05/2026" → "2026-05-12"
+     * "15/03/2027" → "2027-03-15"
+     * "03/15/2027" → "2027-03-15" (US format MM/DD/YYYY)
+     * "15-03-2027" → "2027-03-15"
+     * "15.03.2027" → "2027-03-15"
+     * "Mar 15, 2027" → "2027-03-15"
+     * "15 Mar 2027" → "2027-03-15"
+     * "15/03/27" → "2027-03-15" (assume 20XX)
    - Logic: If only month/year is provided (e.g., "Dec 2025"), default to "2025-12-01". 
    - If multiple expiry dates found, choose the EARLIEST (soonest) date.
    - Expiry dates are FUTURE dates (not past dates).
-   - If not found, return "" (empty string).
+   - If not found after thorough search, return "" (empty string).
 
-3. **manufacturingDate**: The date the product was manufactured or produced.
-   - Keywords: "Mfg", "MFG", "Manufacturing", "Production", "Prod", "Made", "Made on", "Date of Manufacture", "Produced on".
-   - Format: Convert to YYYY-MM-DD format (same conversion rules as expiryDate).
-   - Logic: Manufacturing dates are PAST dates (not future dates).
-   - If multiple manufacturing dates found, choose the EARLIEST (oldest) date.
+3. **batchNo**: The batch number, lot number, or serial number of the product.
+   - Keywords (case-insensitive): "Batch", "Batch No", "Batch No:", "Batch Number", "Batch#", "Batch Code", "Batch ID", "LOT", "Lot", "LOT No", "Lot No", "LOT Number", "Lot Number", "LOT#", "Lote", "Lote No", "Serial", "Serial No", "Serial Number", "Serial#".
+   - Search strategy: Scan the ENTIRE OCR text line by line. Look for ANY line containing these keywords.
+   - Extraction: Extract the complete identifier that follows the keyword.
+   - Include: All alphanumeric characters, hyphens (-), slashes (/), underscores (_).
+   - Extract ONLY the value, NOT the keyword itself:
+     * "LOT: ABC123XYZ" → "ABC123XYZ"
+     * "Batch No. 2024-001" → "2024-001"
+     * "LOT# ABC-XYZ-123" → "ABC-XYZ-123"
+     * "Batch: LOT12345" → "LOT12345"
+   - Preserve exact format as printed (case-sensitive).
+   - Max 100 characters.
    - If not found, return "" (empty string).
 
 ### STRICT RULES:
@@ -456,12 +473,14 @@ You are an expert OCR data extraction agent. Your task is to analyze the provide
 - Do NOT include markdown formatting (no json blocks, no code fences).
 - Do NOT include any conversational text or explanations.
 - Use empty strings ("") for any field that cannot be identified with high confidence.
-- Ensure all keys are lowercase as defined: product, expiryDate, manufacturingDate
+- Ensure all keys are lowercase as defined: product, expiryDate, batchNo
 - ALL dates MUST be in YYYY-MM-DD format
 - Read the ENTIRE OCR text carefully from top to bottom
+- Expiry date is HIGHEST PRIORITY - extract it if present
+- Batch number is IMPORTANT - extract it if present
 
 ### OUTPUT FORMAT:
-{"product": "String", "expiryDate": "YYYY-MM-DD", "manufacturingDate": "YYYY-MM-DD"}`;
+{"product": "String", "expiryDate": "YYYY-MM-DD", "batchNo": "String"}`;
 
 app.get("/", (req, res) => {
   res.json({
@@ -499,7 +518,7 @@ app.post("/extract-fields", async (req, res) => {
     const textResponse = result.response.text();
     console.log("Gemini raw response:", textResponse);
     
-    let extracted = { product: "", expiryDate: "", manufacturingDate: "" };
+    let extracted = { product: "", expiryDate: "", batchNo: "" };
     
     try {
       const jsonStart = textResponse.indexOf("{");
@@ -527,11 +546,13 @@ app.post("/extract-fields", async (req, res) => {
         console.log("Expiry date not found in parsed JSON");
       }
       
-      if (parsed.manufacturingDate && String(parsed.manufacturingDate).trim()) {
-        extracted.manufacturingDate = coerceIsoDate(String(parsed.manufacturingDate).trim());
-        console.log("Manufacturing date - raw:", String(parsed.manufacturingDate).trim(), "converted:", extracted.manufacturingDate);
+      // Extract batchNo
+      if (parsed.batchNo && String(parsed.batchNo).trim()) {
+        extracted.batchNo = String(parsed.batchNo).trim().slice(0, 100);
+        console.log("Batch number extracted:", extracted.batchNo);
       } else {
-        console.log("Manufacturing date not found in parsed JSON");
+        console.log("Batch number not found in parsed JSON");
+        extracted.batchNo = "";
       }
     } catch (e) {
       console.warn("JSON parse failed, trying regex fallback. Error:", e.message);
@@ -573,18 +594,21 @@ app.post("/extract-fields", async (req, res) => {
         }
       }
       
-      // Manufacturing date patterns
-      const mfgPatterns = [
-        /"manufacturingDate"\s*:\s*"([^"]+)"/i,
-        /manufacturingDate["\s]*:["\s]*"([^"]+)"/i,
-        /manufacturingDate["\s]*:["\s]*([^",\s}]+)/i
+      // Batch number patterns
+      const batchPatterns = [
+        /"batchNo"\s*:\s*"([^"]+)"/i,
+        /batchNo["\s]*:["\s]*"([^"]+)"/i,
+        /batchNo["\s]*:["\s]*([^",\s}]+)/i,
+        /"batch"\s*:\s*"([^"]+)"/i,
+        /"lot"\s*:\s*"([^"]+)"/i,
+        /"LOT"\s*:\s*"([^"]+)"/i
       ];
       
-      for (const pattern of mfgPatterns) {
+      for (const pattern of batchPatterns) {
         const match = textResponse.match(pattern);
         if (match && match[1] && match[1].trim()) {
-          extracted.manufacturingDate = coerceIsoDate(match[1].trim());
-          console.log("Manufacturing date extracted via regex fallback:", match[1], "→", extracted.manufacturingDate);
+          extracted.batchNo = match[1].trim().slice(0, 100);
+          console.log("Batch number extracted via regex fallback:", extracted.batchNo);
           break;
         }
       }
@@ -593,12 +617,12 @@ app.post("/extract-fields", async (req, res) => {
     // Ensure all fields are strings
     extracted.product = extracted.product || "";
     extracted.expiryDate = extracted.expiryDate || "";
-    extracted.manufacturingDate = extracted.manufacturingDate || "";
+    extracted.batchNo = extracted.batchNo || "";
     
     console.log("Final extracted values:", {
       product: extracted.product,
       expiryDate: extracted.expiryDate,
-      manufacturingDate: extracted.manufacturingDate
+      batchNo: extracted.batchNo
     });
     
     res.json(extracted);
