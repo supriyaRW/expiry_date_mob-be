@@ -18,30 +18,64 @@ if (!apiKey) {
 
 const genAI = new GoogleGenerativeAI(apiKey || "");
 
-const prompt = `You are a product label reader. Extract exactly four fields from the OCR text below.
+const prompt = `You are an expert product label reader. Extract exactly four fields from the OCR text below with high accuracy.
 
-RULES:
-1) product (required): The product or item name.
-   - Prefer values from: "Product Description", "QR Item Description", "Item Description", "Product Name", "Product:", "Description:", "Item:", "Name:" (use the value after the colon).
-   - Otherwise use the main product title or the longest line that clearly describes the product.
-   - Do NOT use: LOT number, REF, batch number, or date-only lines as product.
-   - If the OCR text has no product-like line, use the first non-empty line that is not a date or code, or return "Unknown Product".
+FIELD EXTRACTION RULES:
 
-2) expiryDate: Expiry / use-by / best before date. Return YYYY-MM-DD only.
-   - Look for: "Expiry", "Exp:", "E:", "Use by", "Best before", "EXP".
-   - Convert any format (DD.MM.YYYY, MM/YYYY, etc.) to YYYY-MM-DD. Month-only -> first day (e.g. 2027-01-01).
-   - If not found, return "".
+1) product (REQUIRED - always return a value):
+   - PRIMARY SOURCES (in order of priority):
+     * Lines containing: "Product Description", "QR Item Description", "Item Description", "Product Name", "Product:", "Description:", "Item:", "Name:", "Product Name:", "Item Name:"
+     * Extract the text AFTER the colon or label (e.g., "Product: SHARPS CONTAINER" → "SHARPS CONTAINER")
+   - SECONDARY SOURCES (if primary not found):
+     * The longest line that contains descriptive words (not codes, dates, or numbers only)
+     * Main product title (usually first or second substantial line)
+     * Brand name + product name combination
+   - EXCLUDE:
+     * LOT/Batch numbers, REF codes, serial numbers, barcodes
+     * Date-only lines (e.g., "2027-01-01")
+     * Single-word codes or abbreviations
+   - If truly no product name found, return "Unknown Product" (never empty string)
 
-3) batchNo: Batch number / lot number. Return the full batch or lot identifier as printed.
-   - Look for: "Batch", "Batch No", "LOT", "LOT No", "LOT#", "Batch #", "Lote", etc.
-   - Return the value as-is (letters and numbers). If not found, return "".
+2) expiryDate (return YYYY-MM-DD format or empty string ""):
+   - SEARCH TERMS: "Expiry", "Exp:", "E:", "EXP", "Expiry Date", "Exp Date", "Use by", "Use-by", "Use By", "Best before", "Best Before", "BB", "BBE", "Expires", "Valid until", "Valid Until"
+   - DATE FORMAT CONVERSION:
+     * DD.MM.YYYY → YYYY-MM-DD (e.g., "15.03.2027" → "2027-03-15")
+     * DD/MM/YYYY → YYYY-MM-DD (e.g., "15/03/2027" → "2027-03-15")
+     * MM/DD/YYYY → YYYY-MM-DD (e.g., "03/15/2027" → "2027-03-15")
+     * YYYY-MM-DD → keep as-is
+     * MM/YYYY or MM.YYYY → YYYY-MM-01 (e.g., "03/2027" → "2027-03-01")
+     * YYYY → YYYY-12-31 (if only year, use last day of year)
+   - If multiple expiry dates found, use the EARLIEST one
+   - If not found, return "" (empty string)
 
-4) manufacturingDate: Manufacturing / production date. Return YYYY-MM-DD only.
-   - Look for: "Mfg", "MFG", "Production", "Prod.", "P:", "Manufacturing".
-   - Same conversion as expiry. If not found, return "".
+3) batchNo (return as printed or empty string ""):
+   - SEARCH TERMS: "Batch", "Batch No", "Batch No:", "Batch#", "Batch Number", "LOT", "LOT No", "LOT No:", "LOT#", "Lot Number", "Lote", "Lote No", "Batch ID", "Lot ID", "Serial", "Serial No"
+   - EXTRACTION:
+     * Extract the complete value after the label (e.g., "LOT: ABC123XYZ" → "ABC123XYZ")
+     * Include all alphanumeric characters, hyphens, and slashes as printed
+     * Do NOT include the label itself (e.g., don't return "LOT ABC123", return "ABC123")
+   - COMMON PATTERNS:
+     * "LOT12345" → "12345" or "LOT12345" (prefer without prefix if ambiguous)
+     * "Batch: 2024-001" → "2024-001"
+     * "LOT# ABC-XYZ-123" → "ABC-XYZ-123"
+   - If not found, return "" (empty string)
 
-Output ONLY a single-line JSON object with keys product, expiryDate, batchNo, manufacturingDate. No markdown, no code block, no extra text.
-Example: {"product":"SHARPS CONTAINER 10L","expiryDate":"2027-01-01","batchNo":"LOT12345","manufacturingDate":"2024-05-01"}`;
+4) manufacturingDate (return YYYY-MM-DD format or empty string ""):
+   - SEARCH TERMS: "Mfg", "MFG", "Mfg Date", "MFG Date", "Mfg:", "Manufacturing", "Manufacturing Date", "Production", "Prod.", "Prod Date", "Production Date", "P:", "Made", "Made on", "Produced", "Produced on"
+   - DATE FORMAT CONVERSION: Same rules as expiryDate (convert to YYYY-MM-DD)
+   - If multiple manufacturing dates found, use the EARLIEST one
+   - If not found, return "" (empty string)
+
+OUTPUT FORMAT:
+- Output ONLY a single-line JSON object with keys: product, expiryDate, batchNo, manufacturingDate
+- No markdown, no code blocks, no explanations, no extra text
+- All dates must be YYYY-MM-DD format (or empty string)
+- Product must never be empty (use "Unknown Product" if not found)
+
+EXAMPLE OUTPUT:
+{"product":"SHARPS CONTAINER 10L","expiryDate":"2027-01-15","batchNo":"LOT12345","manufacturingDate":"2024-05-01"}
+
+Now extract the fields from the OCR text below:`;
 
 app.get("/", (req, res) => {
   res.json({
