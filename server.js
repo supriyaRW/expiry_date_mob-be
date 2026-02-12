@@ -271,6 +271,5 @@ if (process.env.VERCEL !== "1" && !process.env.VERCEL_ENV) {
   app.listen(port, host, () => {
     console.log(`Backend listening on http://${host}:${port} (use this PC's LAN IP for real device)`);
   });
+  
 }
-
-
