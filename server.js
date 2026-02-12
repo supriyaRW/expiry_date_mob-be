@@ -331,11 +331,12 @@ function coerceIsoDate(text) {
     }
   }
   
-  // Try "Mar 15, 2027" format
-  const monthFirstPattern = /([a-z]+)[\s\-](\d{1,2})[\s\-,](\d{4})/i;
+  // Try "Mar 15, 2027" or "July 25 2002" or "July 25 02" (month day year)
+  const monthFirstPattern = /([a-z]+)[\s\-]+(\d{1,2})[\s\-,]+(\d{2}|\d{4})/i;
   const monthFirstMatch = normalized.match(monthFirstPattern);
   if (monthFirstMatch) {
-    const [_, month, day, year] = monthFirstMatch;
+    const [_, month, day, yRaw] = monthFirstMatch;
+    const year = yRaw.length === 2 ? `20${yRaw}` : yRaw;
     const monthKey = month.toLowerCase().slice(0, 3);
     if (monthMap[monthKey] || monthMap[month.toLowerCase()]) {
       const monthNum = monthMap[monthKey] || monthMap[month.toLowerCase()];
@@ -429,17 +430,13 @@ const prompt = `You are an expert at extracting product information from product
    - Keywords (case-insensitive): "EXP", "Expiry", "Expiry Date", "Exp Date", "Best Before", "BBE", "BB", "Use By", "Use-by", "Use Before", "Valid Until", "Valid Thru", "Best By", "Consume By", "Expires", "Expires on", "Expiration", "Expiration Date", "Sell by", "Sell-by".
    - Search strategy: Scan the ENTIRE image text carefully. Look for ANY text containing these keywords (even if misspelled or abbreviated).
    - Date location: Date may appear on same line after keyword, next line, or separated by colon/dash/space.
-   - Format: Convert to YYYY-MM-DD. Examples:
-     * "12/05/2026" → "2026-05-12"
-     * "15/03/2027" → "2027-03-15"
-     * "03/15/2027" → "2027-03-15" (US format MM/DD/YYYY)
-     * "15-03-2027" → "2027-03-15"
-     * "15.03.2027" → "2027-03-15"
-     * "Mar 15, 2027" → "2027-03-15"
-     * "15 Mar 2027" → "2027-03-15"
-     * "15/03/27" → "2027-03-15" (assume 20XX)
-   - Logic: If only month/year is provided (e.g., "Dec 2025"), default to "2025-12-01". 
-   - If multiple expiry dates found, choose the EARLIEST (soonest) date.
+   - Format: ALWAYS output YYYY-MM-DD. Accept and convert ALL of these (and similar):
+     * Numeric: "12/05/2026" → "2026-05-12", "15-03-2027", "15.03.2027", "03/15/2027" (US), "15/03/27" (20XX).
+     * Month name + day + year: "July 25 2002" → "2002-07-25", "Mar 15, 2027" → "2027-03-15", "15 Mar 2027" → "2027-03-15".
+     * Month + year only: "July 2026", "Dec 2025" → "2026-07-01", "2025-12-01" (use 1st of month).
+     * Month + day only: "July 25", "Jul 25" → use next occurrence of that date (e.g. "2026-07-25" if still future).
+     * Month only: "July", "Jul" → "YYYY-07-01" (use 1st of that month, year so it is in the future).
+   - Logic: If only month/year, use day 01. If only month, use 01 and pick year so date is future. If multiple expiry dates, choose the EARLIEST.
    - Expiry dates are FUTURE dates (not past dates like manufacturing dates).
    - If not found after thorough search, return "" (empty string).
 
@@ -459,8 +456,17 @@ const prompt = `You are an expert at extracting product information from product
 {"expiryDate": "YYYY-MM-DD"}`;
 
 // Shorter prompt when input is OCR text (faster, same extraction rules)
-const promptForText = `You extract ONLY the expiry date from OCR text of a product label. Return a single-line JSON: {"expiryDate": "YYYY-MM-DD"} or {"expiryDate": ""} if not found.
-Keywords: EXP, Expiry, Exp Date, Best Before, BBE, Use By, Valid Until, etc. Convert any date format to YYYY-MM-DD. Return only the JSON, no other text.`;
+const promptForText = `Extract ONLY the expiry date from the OCR text below. Return a single-line JSON: {"expiryDate": "YYYY-MM-DD"} or {"expiryDate": ""} if not found.
+
+Rules:
+- Look for keywords: EXP, Expiry, Exp Date, Best Before, BBE, Use By, Valid Until, Best By, Sell by, etc.
+- ALWAYS output YYYY-MM-DD. Convert any format you find:
+  * "July 25 2002" or "Jul 25 2002" → "2002-07-25"
+  * "July 25" or "Jul 25" (no year) → use next future date (e.g. "2026-07-25")
+  * "July 2026" or "Jul 26" → "2026-07-01"
+  * "July" or "Jul" only → "YYYY-07-01" (1st of month, year = next future)
+  * "15/03/2027", "15-03-2027", "Mar 15, 2027" → "2027-03-15"
+- Expiry is a FUTURE date. If unclear, prefer the date that looks like expiry (after keywords). Return only the JSON, no other text.`;
 
 app.get("/", (req, res) => {
   res.json({
