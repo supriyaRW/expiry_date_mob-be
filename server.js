@@ -771,7 +771,7 @@ app.post("/extract-fields", async (req, res) => {
 
     // 2. Configure and select the AI model
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-1.5-flash-latest",
       generationConfig: { temperature: 0.1, maxOutputTokens: 200 }, // Low temp for predictable JSON
     });
 
