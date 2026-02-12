@@ -778,75 +778,123 @@ function coerceIsoDate(text) {
 // =================================================================
 const PROMPT_FOR_IMAGE = `You are an expert at extracting product information from labels. Extract THREE fields and return ONLY a JSON object.
 
-CRITICAL RULES:
-1. Read the ENTIRE label carefully from top to bottom
-2. Manufacturing date and Expiry date are DIFFERENT - don't confuse them
-3. Expiry dates are FUTURE dates, Manufacturing dates are PAST dates
-4. Return ONLY valid JSON, no markdown, no explanations
+⚠️ CRITICAL: You MUST look for ALL THREE fields. Don't stop after finding manufacturer!
+
+EXTRACTION PRIORITY (scan in this order):
+1. EXPIRY DATE - MOST IMPORTANT
+2. BATCH NUMBER - SECOND PRIORITY  
+3. MANUFACTURER - LAST
 
 FIELDS TO EXTRACT:
 
-**manufacturer**: 
-- The brand or company name on the product
-- Look for: company logos, brand names, "Manufactured by", "Mfr", "Brand"
-- Examples: "Nestle", "Coca-Cola", "Unilever", "P&G"
-- Return "" if not found
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**expiryDate** (HIGHEST PRIORITY - FIND THIS FIRST):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+KEYWORDS (look for ANY of these):
+- "EXP", "EXP DATE", "EXP:", "EXPIRY", "EXPIRY DATE", "EXPIRES", "EXPIRES ON"
+- "BEST BEFORE", "BBE", "BB", "BEST BY", "BEST BEFORE DATE"
+- "USE BY", "USE-BY", "USE BEFORE", "USE BEFORE DATE"
+- "VALID UNTIL", "VALID THRU", "VALID TILL"
+- "CONSUME BEFORE", "CONSUME BY"
+- "SELL BY", "SELL-BY DATE"
 
-**batchNo**: 
-- The batch/lot number or production code
-- Keywords to look for: "Batch", "Batch No", "Batch Number", "LOT", "Lot No", "Lot Number", "B.No", "L.No"
-- Extract ONLY the alphanumeric code that follows these keywords
-- Examples: "ABC123", "20250115-A", "L12345", "B-987654"
-- Ignore other numbers like dates, prices, weights, barcodes
-- Return "" if not found
+SEARCH EVERYWHERE on the label - top, bottom, sides, corners!
+The date may be on a separate line, in small text, or stamped.
 
-**expiryDate**: 
-- The EXPIRATION/EXPIRY date (when product expires or should be used by)
-- Keywords to look for: "EXP", "Expiry", "Expiry Date", "Exp Date", "Expires", "Expires on", "Expiration", "Best Before", "BBE", "Best By", "BB", "Use By", "Use Before", "Valid Until", "Valid Thru", "Consume Before", "Sell By"
-- DO NOT confuse with: "MFG", "Mfg Date", "Manufacturing Date", "Manufactured on", "Production Date", "Packed on"
-- Convert ALL date formats to YYYY-MM-DD:
-  * "31/12/2025" → "2025-12-31"
-  * "Dec 2025" → "2025-12-01"
-  * "12-2025" → "2025-12-01"
-  * "25/03/27" → "2027-03-25" (assume 20XX for 2-digit years)
-- If multiple dates found, choose the FUTURE date (expiry), NOT past date (manufacturing)
-- Return "" if not found
+FORMAT CONVERSION - Convert ANY of these to YYYY-MM-DD:
+- "31/12/2025" → "2025-12-31"
+- "31-12-2025" → "2025-12-31"  
+- "31.12.2025" → "2025-12-31"
+- "Dec 2025" → "2025-12-01"
+- "December 2025" → "2025-12-01"
+- "12/2025" → "2025-12-01"
+- "2025/12/31" → "2025-12-31"
+- "25/03/27" → "2027-03-25" (assume 20XX for 2-digit years)
+
+⚠️ NEVER confuse with manufacturing date! Look for EXP/EXPIRY keywords!
+Return "" if not found
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**batchNo** (SECOND PRIORITY):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+KEYWORDS (look for ANY of these):
+- "BATCH", "BATCH NO", "BATCH NUMBER", "BATCH #", "B.NO", "B NO"
+- "LOT", "LOT NO", "LOT NUMBER", "LOT #", "L.NO", "L NO"  
+- "SERIAL", "SERIAL NO", "SERIAL NUMBER", "SN"
+- "CODE", "PRODUCT CODE", "ITEM CODE"
+
+WHAT TO EXTRACT:
+- The alphanumeric code that appears AFTER these keywords
+- Usually format: "ABC123", "20250115", "L-12345", "B987654", etc.
+- Ignore barcodes (long numbers like 1234567890123)
+- Ignore dates, prices, weights
+
+EXAMPLE:
+- "Batch No: ABC123" → Extract "ABC123"
+- "LOT L-98765" → Extract "L-98765"
+- "Code: XYZ-2024-01" → Extract "XYZ-2024-01"
+
+Return "" if not found
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**manufacturer** (THIRD PRIORITY):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHAT TO LOOK FOR:
+- Brand name (usually largest text on label)
+- Company logo text
+- "Manufactured by", "Mfr:", "Brand:", "Company:"
+
+EXAMPLES: "Nestle", "Coca-Cola", "Unilever", "P&G", "Qatar Airways"
+Return "" if not found
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 SCANNING STRATEGY:
-1. First, scan for expiry keywords (EXP, Best Before, etc.) - this is most important
-2. Then look for batch/lot keywords
-3. Finally identify the manufacturer/brand
-4. Double-check you didn't mix up manufacturing date with expiry date
+1. Scan ENTIRE label from top to bottom
+2. Find EXPIRY keywords first → Extract date
+3. Find BATCH/LOT keywords → Extract code  
+4. Find brand/company name
+5. Double-check you found all three (if they exist)
 
 OUTPUT FORMAT (STRICT):
 {"manufacturer": "String", "batchNo": "String", "expiryDate": "YYYY-MM-DD"}
 
-Examples:
+EXAMPLES:
 {"manufacturer": "Nestle", "batchNo": "L12345", "expiryDate": "2025-12-31"}
-{"manufacturer": "", "batchNo": "ABC123", "expiryDate": "2026-06-15"}`;
+{"manufacturer": "Coca-Cola", "batchNo": "ABC123", "expiryDate": "2026-06-15"}
+{"manufacturer": "Qatar Airways", "batchNo": "QR-98765", "expiryDate": "2027-03-20"}
+
+⚠️ IMPORTANT: Even if manufacturer is prominent, ALWAYS search for batch and expiry!`;
 
 const PROMPT_FOR_TEXT = `Extract manufacturer, batchNo, and expiryDate from the OCR text below.
 
-CRITICAL: Manufacturing date ≠ Expiry date. Expiry is FUTURE, Manufacturing is PAST.
+⚠️ CRITICAL RULES:
+1. ALWAYS search for all THREE fields
+2. Expiry date ≠ Manufacturing date
+3. Extract expiry FIRST, then batch, then manufacturer
 
-FIELD DEFINITIONS:
+PRIORITY ORDER:
+1️⃣ **expiryDate**: Look for "EXP", "EXPIRY", "BEST BEFORE", "USE BY", "VALID UNTIL", "BB", "BBE"
+   - NOT "MFG", "MANUFACTURED", "PRODUCTION DATE"
+   - Convert to YYYY-MM-DD format
+   
+2️⃣ **batchNo**: Look for "BATCH", "LOT", "SERIAL", "B.NO", "L.NO", "CODE"
+   - Extract the alphanumeric code after keyword
+   - Example: "LOT ABC123" → "ABC123"
+   
+3️⃣ **manufacturer**: Brand/company name
 
-**manufacturer**: Brand/company name
-**batchNo**: Code after "Batch", "LOT", "Lot No", "B.No" keywords (alphanumeric only)
-**expiryDate**: Date after "EXP", "Expiry", "Best Before", "Use By" keywords
-  - NOT the date after "MFG", "Manufactured", "Production Date"
-  - Convert to YYYY-MM-DD format
-  - If multiple dates, choose the FUTURE one (expiry)
+SCAN STRATEGY:
+- Read ALL text line by line
+- Find EXPIRY keywords → extract date
+- Find BATCH/LOT keywords → extract code
+- Find brand name
+- Return "" for fields not found
 
-SCANNING PRIORITY:
-1. Find expiry date first (EXP/Best Before keywords)
-2. Find batch number (LOT/Batch keywords)  
-3. Find manufacturer (brand name)
+OUTPUT: Single-line JSON only.
+{"manufacturer":"String","batchNo":"String","expiryDate":"YYYY-MM-DD"}
 
-OUTPUT: Single-line JSON only, no markdown.
-Format: {"manufacturer":"String","batchNo":"String","expiryDate":"YYYY-MM-DD"}
-
-Return "" for fields not found with confidence.`;
+⚠️ Don't stop after finding manufacturer - ALWAYS search for batch and expiry!`;
 
 
 // =================================================================
@@ -939,7 +987,10 @@ app.post("/extract-fields", async (req, res) => {
     // 4. Call the Gemini API
     const result = await model.generateContent(requestPayload);
     const textResponse = result.response.text();
-    console.log("Gemini raw response:", textResponse);
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("Gemini raw response:");
+    console.log(textResponse);
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     // 5. Parse the AI response (JSON with Regex Fallback)
     let extracted = { manufacturer: "", batchNo: "", expiryDate: "" };
@@ -1000,7 +1051,21 @@ app.post("/extract-fields", async (req, res) => {
       }
     }
     
-    console.log("Final extracted data:", extracted);
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("FINAL EXTRACTED VALUES:");
+    console.log("  manufacturer:", extracted.manufacturer || "(empty)");
+    console.log("  batchNo:", extracted.batchNo || "(empty)");
+    console.log("  expiryDate:", extracted.expiryDate || "(empty)");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    // Warn if critical fields are missing
+    if (!extracted.batchNo) {
+      console.warn("⚠️ WARNING: Batch number not found in extraction!");
+    }
+    if (!extracted.expiryDate) {
+      console.warn("⚠️ WARNING: Expiry date not found in extraction!");
+    }
+    
     res.status(200).json(extracted);
 
   } catch (err) {
