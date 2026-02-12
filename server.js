@@ -104,10 +104,10 @@ const prompt = `You are an expert at extracting product information from product
    - Logic: Expiry dates are ALWAYS in the FUTURE compared to manufacturing dates.
    - Format: Convert to YYYY-MM-DD.
 
-3. **batchNo**: The batch or lot number associated with the production.
-   - Keywords: "Batch No", "Batch Number", "B.No", "BN", "Lot No", "Lot Number", "Lot", "Batch", "L.No".
-   - Search strategy: Look for a string of alphanumeric characters, often preceded by "B." or "L.".
-   - Format: Extract exactly as it appears (e.g., "B12345", "LOT-99").
+3. **batchNo**: The identifier for the production batch/lot.
+   - Keywords: "Batch No", "Batch Number", "B.No", "BN", "B/N", "B. No.", "BN:", "Batch", "BATCH", "Lot No", "Lot Number", "LOT", "L.No", "LOT#", "Batch#", "B/L", "B.L.", "Batch Code", "B/No".
+   - Search strategy: Look for alphanumeric strings (e.g., "ABCD123", "B123-45", "EA6CS1_12560652-102NES"). It is usually located near the MFD/EXP dates.
+   - Critical: Extract EXACTLY as written. Do not misinterpret it as a date.
 
 ### STRICT RULES:
 - Extract ONLY these three fields: mfgDate, expiryDate, batchNo.
@@ -146,7 +146,7 @@ app.post("/extract-fields", async (req, res) => {
 
     const model = genAI.getGenerativeModel({
       model: "gemini-3-flash-preview",
-      generationConfig: { temperature: 0.2 },
+      generationConfig: { temperature: 0.1 }, // Low temperature for higher accuracy in extraction
     });
 
     let result;
@@ -229,11 +229,6 @@ app.post("/extract-fields", async (req, res) => {
     res.json(extracted);
   } catch (err) {
     console.error("extract-fields error:", err);
-    console.error("Error type:", typeof err);
-    console.error("Error keys:", err ? Object.keys(err) : "null");
-    console.error("Error status:", err?.status);
-    console.error("Error statusText:", err?.statusText);
-
     // Extract error message from various possible structures
     let message = "Internal error";
     if (err) {
@@ -241,18 +236,8 @@ app.post("/extract-fields", async (req, res) => {
         message = String(err.message).trim();
       } else if (err.statusText) {
         message = `${err.status || "Error"} ${err.statusText}`;
-      } else if (typeof err.toString === "function") {
-        const str = err.toString();
-        if (str && str !== "[object Object]") {
-          message = str;
-        }
-      }
-      // For Gemini API errors, check nested properties
-      if (message === "Internal error" && err.errorDetails) {
-        message = String(err.errorDetails).slice(0, 200);
       }
     }
-
     res.status(500).json({ error: String(message).slice(0, 200) });
   }
 });
@@ -261,15 +246,12 @@ app.get("/health", (req, res) => {
   res.json({ ok: true, message: "OCR backend running" });
 });
 
-// Export app for Vercel serverless functions
 export default app;
 
-// Only start listening if running locally (not on Vercel)
 if (process.env.VERCEL !== "1" && !process.env.VERCEL_ENV) {
   const port = process.env.PORT || 5050;
   const host = "0.0.0.0";
   app.listen(port, host, () => {
-    console.log(`Backend listening on http://${host}:${port} (use this PC's LAN IP for real device)`);
+    console.log(`Backend listening on http://${host}:${port}`);
   });
-  
 }
