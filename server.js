@@ -676,67 +676,177 @@ function coerceIsoDate(text) {
 
   // Month name mapping for parsing
   const monthMap = {
-    jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
-    jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+    jan: "01", january: "01", feb: "02", february: "02", mar: "03", march: "03",
+    apr: "04", april: "04", may: "05", jun: "06", june: "06",
+    jul: "07", july: "07", aug: "08", august: "08", sep: "09", sept: "09", september: "09",
+    oct: "10", october: "10", nov: "11", november: "11", dec: "12", december: "12"
   };
-  Object.assign(monthMap, {
-    january: "01", february: "02", march: "03", april: "04", /* may */
-    june: "06", july: "07", august: "08", september: "09", october: "10",
-    november: "11", december: "12"
-  });
 
-  // Tries to match formats like: "15 Mar 2027", "Mar 15, 2027", "15-Mar-2027"
-  let match = normalized.match(/(\d{1,2})?[\s\-,.]*([a-z]+)[\s\-,.]*(\d{1,2})?[\s\-,.]*(\d{4}|\d{2})/i);
+  // Try: "15 Mar 2027", "Mar 15, 2027", "15-Mar-2027", "15.Mar.2027"
+  let match = normalized.match(/(\d{1,2})[\s\-.,]*([a-z]+)[\s\-.,]*(\d{2,4})/i);
   if (match) {
-    const [_, day1, monthStr, day2, yearStr] = match;
-    const day = day1 || day2;
+    const [_, day, monthStr, yearStr] = match;
     const year = yearStr.length === 2 ? `20${yearStr}` : yearStr;
     const monthKey = monthStr.toLowerCase().slice(0, 3);
-    if (day && year && monthMap[monthKey]) {
+    if (monthMap[monthKey]) {
       const monthNum = monthMap[monthKey];
       return `${year}-${monthNum.padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     }
   }
 
-  // Tries to match formats like: DD/MM/YYYY or MM/DD/YYYY
-  match = normalized.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4}|\d{2})/);
+  // Try: "Mar 15, 2027", "March 15 2027"
+  match = normalized.match(/([a-z]+)[\s\-.,]*(\d{1,2})[\s\-.,]*(\d{2,4})/i);
+  if (match) {
+    const [_, monthStr, day, yearStr] = match;
+    const year = yearStr.length === 2 ? `20${yearStr}` : yearStr;
+    const monthKey = monthStr.toLowerCase().slice(0, 3);
+    if (monthMap[monthKey]) {
+      const monthNum = monthMap[monthKey];
+      return `${year}-${monthNum.padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+
+  // Try: "Dec 2025", "December 2025", "12-2025", "12/2025"
+  match = normalized.match(/([a-z]+|\d{1,2})[\s\-/.](\d{4})/i);
+  if (match) {
+    const [_, part1, year] = match;
+    // Check if part1 is month name
+    if (isNaN(part1)) {
+      const monthKey = part1.toLowerCase().slice(0, 3);
+      if (monthMap[monthKey]) {
+        return `${year}-${monthMap[monthKey]}-01`;
+      }
+    } else {
+      // Numeric month
+      const month = String(part1).padStart(2, "0");
+      if (parseInt(month) >= 1 && parseInt(month) <= 12) {
+        return `${year}-${month}-01`;
+      }
+    }
+  }
+
+  // Try: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
+  match = normalized.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
   if (match) {
     let [_, p1, p2, year] = match;
     year = year.length === 2 ? `20${year}` : year;
-    // Assume DD/MM if day > 12
-    if (parseInt(p1, 10) > 12) {
-      return `${year}-${p2.padStart(2, "0")}-${p1.padStart(2, "0")}`; // DD/MM/YYYY
+    const n1 = parseInt(p1);
+    const n2 = parseInt(p2);
+    
+    // If first part > 12, it must be day (DD/MM/YYYY)
+    if (n1 > 12 && n2 <= 12) {
+      return `${year}-${p2.padStart(2, "0")}-${p1.padStart(2, "0")}`;
     }
-    // Assume MM/DD if day > 12
-    if (parseInt(p2, 10) > 12) {
-      return `${year}-${p1.padStart(2, "0")}-${p2.padStart(2, "0")}`; // MM/DD/YYYY
+    // If second part > 12, it's MM/DD/YYYY
+    if (n1 <= 12 && n2 > 12) {
+      return `${year}-${p1.padStart(2, "0")}-${p2.padStart(2, "0")}`;
     }
-    // Ambiguous (e.g., 01/02/2025), assume international standard DD/MM/YYYY
-    return `${year}-${p2.padStart(2, "0")}-${p1.padStart(2, "0")}`;
+    // Both <= 12: Assume DD/MM/YYYY (international standard)
+    if (n1 <= 12 && n2 <= 12) {
+      return `${year}-${p2.padStart(2, "0")}-${p1.padStart(2, "0")}`;
+    }
   }
   
-  // If all parsing fails, return the original trimmed string
-  return normalized;
+  // Try: YYYY/MM/DD, YYYY-MM-DD, YYYY.MM.DD
+  match = normalized.match(/(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+  if (match) {
+    const [_, year, month, day] = match;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  // Try: Just month name "December" -> use 1st of month, current/next year
+  match = normalized.match(/^([a-z]+)$/i);
+  if (match) {
+    const monthKey = match[1].toLowerCase().slice(0, 3);
+    if (monthMap[monthKey]) {
+      const now = new Date();
+      let year = now.getFullYear();
+      const currentMonth = now.getMonth() + 1;
+      const targetMonth = parseInt(monthMap[monthKey]);
+      // If month has passed this year, use next year
+      if (targetMonth < currentMonth) year += 1;
+      return `${year}-${monthMap[monthKey]}-01`;
+    }
+  }
+  
+  // If all parsing fails, return empty string for safety
+  return "";
 }
 
 // =================================================================
 //  AI Prompts: Instructions for the Gemini model.
 // =================================================================
-const PROMPT_FOR_IMAGE = `Extract THREE fields from product label images: manufacturer, batchNo, expiryDate. Return ONLY a single-line JSON.
+const PROMPT_FOR_IMAGE = `You are an expert at extracting product information from labels. Extract THREE fields and return ONLY a JSON object.
 
-### FIELDS:
-1.  **manufacturer**: Brand/company name (e.g., "Nestle", "Coca-Cola"). Look for company names, logos, or "Manufactured by". Max 100 chars. Return "" if not found.
-2.  **batchNo**: Batch/lot number. Keywords: "Batch", "Batch No", "LOT". Extract the identifier that follows the keyword. Max 100 chars. Return "" if not found.
-3.  **expiryDate**: Expiration date. Keywords: "EXP", "Expiry", "Best Before", "Use By". Convert the found date to YYYY-MM-DD format. Return "" if not found.
+CRITICAL RULES:
+1. Read the ENTIRE label carefully from top to bottom
+2. Manufacturing date and Expiry date are DIFFERENT - don't confuse them
+3. Expiry dates are FUTURE dates, Manufacturing dates are PAST dates
+4. Return ONLY valid JSON, no markdown, no explanations
 
-### OUTPUT FORMAT:
-{"manufacturer": "String", "batchNo": "String", "expiryDate": "YYYY-MM-DD"}`;
+FIELDS TO EXTRACT:
 
-const PROMPT_FOR_TEXT = `From the following OCR text, extract manufacturer, batchNo, and expiryDate.
-- **manufacturer**: The brand or company name.
-- **batchNo**: The code after keywords like "Batch", "LOT", or "Serial".
-- **expiryDate**: The date after "EXP", "Expiry", "Best Before". Convert it to YYYY-MM-DD format.
-Return ONLY a single-line JSON object: {"manufacturer":"String","batchNo":"String","expiryDate":"YYYY-MM-DD"}. Return "" for any field not found.`;
+**manufacturer**: 
+- The brand or company name on the product
+- Look for: company logos, brand names, "Manufactured by", "Mfr", "Brand"
+- Examples: "Nestle", "Coca-Cola", "Unilever", "P&G"
+- Return "" if not found
+
+**batchNo**: 
+- The batch/lot number or production code
+- Keywords to look for: "Batch", "Batch No", "Batch Number", "LOT", "Lot No", "Lot Number", "B.No", "L.No"
+- Extract ONLY the alphanumeric code that follows these keywords
+- Examples: "ABC123", "20250115-A", "L12345", "B-987654"
+- Ignore other numbers like dates, prices, weights, barcodes
+- Return "" if not found
+
+**expiryDate**: 
+- The EXPIRATION/EXPIRY date (when product expires or should be used by)
+- Keywords to look for: "EXP", "Expiry", "Expiry Date", "Exp Date", "Expires", "Expires on", "Expiration", "Best Before", "BBE", "Best By", "BB", "Use By", "Use Before", "Valid Until", "Valid Thru", "Consume Before", "Sell By"
+- DO NOT confuse with: "MFG", "Mfg Date", "Manufacturing Date", "Manufactured on", "Production Date", "Packed on"
+- Convert ALL date formats to YYYY-MM-DD:
+  * "31/12/2025" → "2025-12-31"
+  * "Dec 2025" → "2025-12-01"
+  * "12-2025" → "2025-12-01"
+  * "25/03/27" → "2027-03-25" (assume 20XX for 2-digit years)
+- If multiple dates found, choose the FUTURE date (expiry), NOT past date (manufacturing)
+- Return "" if not found
+
+SCANNING STRATEGY:
+1. First, scan for expiry keywords (EXP, Best Before, etc.) - this is most important
+2. Then look for batch/lot keywords
+3. Finally identify the manufacturer/brand
+4. Double-check you didn't mix up manufacturing date with expiry date
+
+OUTPUT FORMAT (STRICT):
+{"manufacturer": "String", "batchNo": "String", "expiryDate": "YYYY-MM-DD"}
+
+Examples:
+{"manufacturer": "Nestle", "batchNo": "L12345", "expiryDate": "2025-12-31"}
+{"manufacturer": "", "batchNo": "ABC123", "expiryDate": "2026-06-15"}`;
+
+const PROMPT_FOR_TEXT = `Extract manufacturer, batchNo, and expiryDate from the OCR text below.
+
+CRITICAL: Manufacturing date ≠ Expiry date. Expiry is FUTURE, Manufacturing is PAST.
+
+FIELD DEFINITIONS:
+
+**manufacturer**: Brand/company name
+**batchNo**: Code after "Batch", "LOT", "Lot No", "B.No" keywords (alphanumeric only)
+**expiryDate**: Date after "EXP", "Expiry", "Best Before", "Use By" keywords
+  - NOT the date after "MFG", "Manufactured", "Production Date"
+  - Convert to YYYY-MM-DD format
+  - If multiple dates, choose the FUTURE one (expiry)
+
+SCANNING PRIORITY:
+1. Find expiry date first (EXP/Best Before keywords)
+2. Find batch number (LOT/Batch keywords)  
+3. Find manufacturer (brand name)
+
+OUTPUT: Single-line JSON only, no markdown.
+Format: {"manufacturer":"String","batchNo":"String","expiryDate":"YYYY-MM-DD"}
+
+Return "" for fields not found with confidence.`;
 
 
 // =================================================================
@@ -842,7 +952,37 @@ app.post("/extract-fields", async (req, res) => {
       
       extracted.manufacturer = (parsed.manufacturer || "").trim().slice(0, 100);
       extracted.batchNo = (parsed.batchNo || "").trim().slice(0, 100);
-      extracted.expiryDate = coerceIsoDate(parsed.expiryDate || "");
+      
+      // Special handling for expiry date - validate it's a future date
+      if (parsed.expiryDate && String(parsed.expiryDate).trim()) {
+        const rawExpiry = String(parsed.expiryDate).trim();
+        const convertedDate = coerceIsoDate(rawExpiry);
+        
+        // Validate that the expiry date is in the future (not a manufacturing date)
+        if (convertedDate && convertedDate !== "") {
+          const expiryDateObj = new Date(convertedDate);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          
+          // If date is more than 20 years in the past, it's probably a manufacturing date
+          const twentyYearsAgo = new Date();
+          twentyYearsAgo.setFullYear(twentyYearsAgo.getFullYear() - 20);
+          
+          if (expiryDateObj >= twentyYearsAgo) {
+            extracted.expiryDate = convertedDate;
+            console.log("Expiry date validated - raw:", rawExpiry, "converted:", convertedDate);
+          } else {
+            console.warn("Date rejected (too old, likely mfg date):", convertedDate);
+            extracted.expiryDate = "";
+          }
+        } else {
+          console.log("Expiry date conversion failed for:", rawExpiry);
+          extracted.expiryDate = "";
+        }
+      } else {
+        console.log("Expiry date not found in parsed JSON");
+        extracted.expiryDate = "";
+      }
 
     } catch (e) {
       console.warn("JSON parsing failed, attempting regex fallback. Error:", e.message);
@@ -854,7 +994,10 @@ app.post("/extract-fields", async (req, res) => {
       if (batchMatch) extracted.batchNo = batchMatch[1].trim().slice(0, 100);
 
       const expiryMatch = textResponse.match(/"expiryDate"\s*:\s*"([^"]*)"/i);
-      if (expiryMatch) extracted.expiryDate = coerceIsoDate(expiryMatch[1].trim());
+      if (expiryMatch) {
+        const convertedDate = coerceIsoDate(expiryMatch[1].trim());
+        if (convertedDate) extracted.expiryDate = convertedDate;
+      }
     }
     
     console.log("Final extracted data:", extracted);
