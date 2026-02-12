@@ -770,8 +770,13 @@ app.post("/extract-fields", async (req, res) => {
     }
 
     // 2. Configure and select the AI model
+    // Model options (try these in order if one fails):
+    // - "gemini-1.5-flash-002" (stable production model, Dec 2024)
+    // - "gemini-1.5-flash" (alias for latest stable)
+    // - "gemini-1.5-pro" (more capable but slower/expensive)
+    // If errors persist, check: https://ai.google.dev/gemini-api/docs/models/gemini
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash-latest",
+      model: "gemini-1.5-flash-002",
       generationConfig: { temperature: 0.1, maxOutputTokens: 200 }, // Low temp for predictable JSON
     });
 
