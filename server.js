@@ -812,9 +812,13 @@ app.post("/extract-fields", async (req, res) => {
       return res.status(500).json({ error: "GEMINI_API_KEY not configured on server" });
     }
 
+    // Use stable production model (not preview/experimental) for reliability
     const model = genAI.getGenerativeModel({
-      model: "gemini-3-flash-preview",
-      generationConfig: { temperature: 0.2 },
+      model: "gemini-1.5-flash",
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 128,
+      },
     });
 
     let result;
