@@ -803,9 +803,9 @@ app.post("/extract-fields", async (req, res) => {
     }
 
     // 2. Configure and select the AI model
-    // Try with "models/" prefix which is the full resource name format
+    // Using gemini-3-flash-preview as requested
     const model = genAI.getGenerativeModel({
-      model: "models/gemini-1.5-flash",
+      model: "gemini-3-flash-preview",
       generationConfig: { temperature: 0.2, maxOutputTokens: 500 },
     });
 
