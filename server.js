@@ -756,6 +756,39 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// New endpoint to check available models
+app.get("/list-models", async (req, res) => {
+  try {
+    if (!apiKey) {
+      return res.status(500).json({ error: "GEMINI_API_KEY not configured" });
+    }
+
+    // Try to list models using direct API call
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
+    );
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      return res.status(response.status).json({ 
+        error: `API error: ${response.status}`,
+        details: errorText 
+      });
+    }
+
+    const data = await response.json();
+    const modelNames = data.models?.map(m => m.name) || [];
+    
+    res.status(200).json({
+      available_models: modelNames,
+      total_count: modelNames.length,
+      recommendation: modelNames.length > 0 ? modelNames[0] : "No models found"
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Main endpoint for extracting data from image or text
 app.post("/extract-fields", async (req, res) => {
   try {
@@ -770,14 +803,10 @@ app.post("/extract-fields", async (req, res) => {
     }
 
     // 2. Configure and select the AI model
-    // Model options (try these in order if one fails):
-    // - "gemini-1.5-flash-002" (stable production model, Dec 2024)
-    // - "gemini-1.5-flash" (alias for latest stable)
-    // - "gemini-1.5-pro" (more capable but slower/expensive)
-    // If errors persist, check: https://ai.google.dev/gemini-api/docs/models/gemini
+    // Try with "models/" prefix which is the full resource name format
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash-002",
-      generationConfig: { temperature: 0.1, maxOutputTokens: 200 }, // Low temp for predictable JSON
+      model: "models/gemini-1.5-flash",
+      generationConfig: { temperature: 0.2, maxOutputTokens: 500 },
     });
 
     // 3. Prepare the payload for the Gemini API
