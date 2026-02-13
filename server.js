@@ -355,9 +355,11 @@ app.post("/extract-fields", async (req, res) => {
     const { image, mimeType } = req.body;
     if (!image && !req.body.text) return res.status(400).json({ error: "No input provided" });
 
-    // Use Gemini 1.5 Flash for maximum speed and efficiency
+    // Use Gemini 1.5 Flash for maximum speed and efficiency (Version 1.2)
+    const modelName = "gemini-1.5-flash";
+    console.log(`Using model: ${modelName} (Checking for accuracy/speed)`);
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: modelName,
       generationConfig: { temperature: 0.1 }
     });
 
