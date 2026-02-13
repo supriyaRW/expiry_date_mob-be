@@ -353,7 +353,7 @@ const prompt = `You are an expert at extracting product information from product
 
 1. **mfgDate**: The date the product was manufactured.
    - Keywords: "MFD", "Mfg Date", "Mfg. Date", "Date of Manufacture", "Manufactured on", "DOM", "PKD", "Packed on", "Production Date", "PROD DATE", "PROD. DATE".
-   - Search strategy: Scan for any of these keywords followed by a date. Use "Production Date" if "Mfg Date" is not found.
+   - Search strategy: First look for definitive Manufacturing Date. If NOT found, look for "Production Date" or "PROD DATE" and use that.
    - Logic: Manufacturing dates are ALWAYS in the PAST compared to expiry dates.
    - Format: Convert to YYYY-MM-DD.
 
